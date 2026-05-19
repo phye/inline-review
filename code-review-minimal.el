@@ -183,6 +183,15 @@ Call `code-review-minimal-finish-review' first"))
       (let ((proceed
              (lambda ()
                (code-review-minimal--checkout-branch-for-review)
+               ;; revert-buffer (called during checkout) runs
+               ;; kill-all-local-variables, which resets all defvar-local state
+               ;; to nil.  Re-apply the values captured by this closure so that
+               ;; mode activation succeeds even when the current buffer is not
+               ;; among the files changed by the MR.
+               (setq code-review-minimal--mr-iid iid
+                     code-review-minimal--project-info projinfo)
+               (when backend
+                 (setq code-review-minimal--current-backend backend))
                ;; Enable mode (which refreshes overlays) or just refresh if already on
                (if (bound-and-true-p code-review-minimal-mode)
                    (code-review-minimal--refresh-overlays)
