@@ -180,25 +180,27 @@ Call `code-review-minimal-finish-review' first"))
                            (alist-get 'owner projinfo)
                            (alist-get 'repo projinfo)))
                code-review-minimal--current-backend)
-      (let ((proceed
-             (lambda ()
-               (code-review-minimal--checkout-branch-for-review)
-               ;; revert-buffer (called during checkout) runs
-               ;; kill-all-local-variables, which resets all defvar-local state
-               ;; to nil.  Re-apply the values captured by this closure so that
-               ;; mode activation succeeds even when the current buffer is not
-               ;; among the files changed by the MR.
-               (setq code-review-minimal--mr-iid iid
-                     code-review-minimal--project-info projinfo)
-               (when backend
-                 (setq code-review-minimal--current-backend backend))
-               ;; Enable mode (which refreshes overlays) or just refresh if already on
-               (if (bound-and-true-p code-review-minimal-mode)
-                   (code-review-minimal--refresh-overlays)
-                 (code-review-minimal-mode 1))))
-            (resolve-branches-fn
-             (code-review-minimal--backend-prop
-              code-review-minimal--current-backend :resolve-branches)))
+      (let* ((initial-buf (current-buffer))
+             (proceed
+              (lambda ()
+                (with-current-buffer initial-buf
+                  (code-review-minimal--checkout-branch-for-review)
+                  ;; revert-buffer (called during checkout) runs
+                  ;; kill-all-local-variables, which resets all defvar-local state
+                  ;; to nil.  Re-apply the values captured by this closure so that
+                  ;; mode activation succeeds even when the current buffer is not
+                  ;; among the files changed by the MR.
+                  (setq code-review-minimal--mr-iid iid
+                        code-review-minimal--project-info projinfo)
+                  (when backend
+                    (setq code-review-minimal--current-backend backend))
+                  ;; Enable mode (which refreshes overlays) or just refresh if already on
+                  (if (bound-and-true-p code-review-minimal-mode)
+                      (code-review-minimal--refresh-overlays)
+                    (code-review-minimal-mode 1)))))
+             (resolve-branches-fn
+              (code-review-minimal--backend-prop
+               code-review-minimal--current-backend :resolve-branches)))
         ;; Call :resolve-branches first so that branch names are populated in
         ;; buffer-local state before the checkout prompt is shown.  All
         ;; built-in backends supply this hook.  Custom backends that omit it
@@ -206,13 +208,14 @@ Call `code-review-minimal-finish-review' first"))
         (if resolve-branches-fn
             (funcall resolve-branches-fn
                      (lambda (source target)
-                       (when source
-                         (setq code-review-minimal--mr-source-branch source))
-                       (when target
-                         (setq code-review-minimal--mr-target-branch target))
-                       (message "[code-review-minimal] source-branch=%s target-branch=%s"
-                                code-review-minimal--mr-source-branch
-                                code-review-minimal--mr-target-branch)
+                       (with-current-buffer initial-buf
+                         (when source
+                           (setq code-review-minimal--mr-source-branch source))
+                         (when target
+                           (setq code-review-minimal--mr-target-branch target))
+                         (message "[code-review-minimal] source-branch=%s target-branch=%s"
+                                  code-review-minimal--mr-source-branch
+                                  code-review-minimal--mr-target-branch))
                        (funcall proceed)))
           (funcall proceed))))))
 

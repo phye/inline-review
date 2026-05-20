@@ -493,8 +493,11 @@ trigger the next rendering step (typically fetching comment threads)."
           (let ((patch
                  (code-review-minimal--find-patch-for-file
                   cached rel-path)))
-            (when patch
-              (code-review-minimal--insert-hunk-overlays patch)))
+            (if patch
+                (code-review-minimal--insert-hunk-overlays patch)
+              (message
+               "code-review-minimal: file not changed in this MR — \
+use `code-review-minimal-next-hunk' to navigate to changed files")))
           (funcall on-done))
       (funcall (code-review-minimal--backend-prop backend :fetch-diff)
                (lambda (changes)
@@ -504,9 +507,12 @@ trigger the next rendering step (typically fetching comment threads)."
                    (let ((patch
                           (code-review-minimal--find-patch-for-file
                            changes rel-path)))
-                     (when patch
-                       (code-review-minimal--insert-hunk-overlays
-                        patch)))
+                     (if patch
+                         (code-review-minimal--insert-hunk-overlays
+                          patch)
+                       (message
+                        "code-review-minimal: file not changed in this MR — \
+use `code-review-minimal-next-hunk' to navigate to changed files")))
                    (funcall on-done)))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
