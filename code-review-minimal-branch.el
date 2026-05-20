@@ -79,63 +79,117 @@ session."
 ;;;; ─── Worktree Stash ─────────────────────────────────────────────────────────
 
 (defun code-review-minimal--stash-worktree ()
-  "Stash the current worktree if dirty and record the stash marker.
+  "Stash the current worktree if dirty and record the stash SHA.
+Only tracked changes (staged or unstaged modifications) trigger a stash;
+untracked files are deliberately ignored so that a workspace containing
+only new/untracked files is not considered dirty.
 Returns t if a stash was created, nil if the worktree was already clean.
 Signals an error if the stash command fails."
-  (let ((default-directory
-         (or (code-review-minimal--git-root) default-directory))
-        (status
-         (string-trim
-          (shell-command-to-string
-           "git status --porcelain 2>/dev/null"))))
-    (when (not (string-empty-p status))
+  (let* ((default-directory
+          (or (code-review-minimal--git-root) default-directory))
+         (raw (shell-command-to-string "git status --porcelain 2>/dev/null"))
+         ;; Exclude untracked ("?? ") and ignored ("!! ") lines; only tracked
+         ;; changes (modifications, deletions, renames, copies) are relevant.
+         (tracked-lines
+          (cl-remove-if (lambda (l) (string-match-p "^[?!][?!] " l))
+                        (split-string raw "\n" t))))
+    (when tracked-lines
       (let ((errbuf (get-buffer-create " *crm-stash-err*")))
         (with-current-buffer errbuf (erase-buffer))
         (let ((rc (call-process "git" nil (list errbuf t) nil
                                 "stash" "push" "-m"
                                 "code-review-minimal auto-stash")))
           (if (and (integerp rc) (zerop rc))
-              (progn
-                (code-review-minimal--record-stash)
-                (message
-                 "code-review-minimal: stashed local changes")
-                t)
+              (let ((sha (string-trim
+                          (shell-command-to-string
+                           "git rev-parse stash@{0} 2>/dev/null"))))
+                (if (string-empty-p sha)
+                    (user-error
+                     "code-review-minimal: stash push succeeded \
+but could not resolve stash@{0}")
+                  (code-review-minimal--record-stash sha)
+                  (message "code-review-minimal: stashed local changes (%s)"
+                           (substring sha 0 (min 8 (length sha))))
+                  t))
             (let ((err (with-current-buffer errbuf (buffer-string))))
               (user-error
                "code-review-minimal: git stash failed%s"
                (if (string-empty-p err)
                    ""
-                 (format " — %s" (string-trim err)))))))))))
+                 (format " \u2014 %s" (string-trim err)))))))))))
 
-(defun code-review-minimal--record-stash ()
-  "Record that a stash was created for this review session."
+(defun code-review-minimal--record-stash (sha)
+  "Record SHA as the stash commit created for this review session.
+SHA is the full commit hash returned by `git rev-parse stash@{0}' immediately
+after the stash push, and is used by `code-review-minimal--pop-stash' to
+locate the exact stash entry even if other stashes are pushed in between."
   (when-let ((root (code-review-minimal--git-root)))
     (let ((file (expand-file-name "code-review-minimal-stash"
                                   (expand-file-name ".git" root))))
-      (write-region "" nil file nil 'silent))))
+      (write-region sha nil file nil 'silent))))
+
+(defun code-review-minimal--find-stash-ref (sha)
+  "Return the stash ref (e.g. \"stash@{2}\") whose commit hash equals SHA.
+Returns nil if no entry in the current stash list matches."
+  (let* ((list-buf (generate-new-buffer " *crm-stash-list*"))
+         (rc (call-process "git" nil list-buf nil
+                           "stash" "list" "--format=%H %gd"))
+         (output (with-current-buffer list-buf
+                   (prog1 (buffer-string) (kill-buffer list-buf)))))
+    (when (and (integerp rc) (zerop rc))
+      (let ((match
+             (cl-find-if (lambda (line) (string-prefix-p sha line))
+                         (split-string output "\n" t))))
+        (when match
+          ;; Line format: "<full-sha> stash@{N}"
+          (cadr (split-string match " " t)))))))
 
 (defun code-review-minimal--pop-stash ()
-  "Pop the auto-stash if one was recorded for this review session."
+  "Pop the auto-stash if one was recorded for this review session.
+Reads the stash commit SHA saved by `code-review-minimal--record-stash',
+locates that exact entry in the stash list (so intervening stashes pushed
+by the user do not get accidentally applied), and pops it by ref.  If the
+SHA is no longer in the stash list the sentinel is removed with a warning."
   (when-let ((root (code-review-minimal--git-root)))
     (let ((file (expand-file-name "code-review-minimal-stash"
                                   (expand-file-name ".git" root))))
       (when (file-exists-p file)
-        (let ((default-directory root)
-              (errbuf (get-buffer-create " *crm-stash-err*")))
-          (with-current-buffer errbuf (erase-buffer))
-          (let ((rc (call-process "git" nil (list errbuf t) nil
-                                  "stash" "pop")))
-            (if (and (integerp rc) (zerop rc))
-                (progn
-                  (delete-file file)
-                  (message
-                   "code-review-minimal: restored stashed changes"))
-              (let ((err (with-current-buffer errbuf (buffer-string))))
-                (message
-                 "code-review-minimal: git stash pop failed%s"
-                 (if (string-empty-p err)
-                     ""
-                   (format " — %s" (string-trim err))))))))))))
+        (let* ((saved-sha (string-trim
+                           (with-temp-buffer
+                             (insert-file-contents file)
+                             (buffer-string))))
+               (default-directory root))
+          (if (string-empty-p saved-sha)
+              ;; Legacy empty sentinel (pre-SHA scheme): remove and skip.
+              (progn
+                (delete-file file)
+                (message "code-review-minimal: legacy stash sentinel \
+(no SHA recorded); skipping restore to avoid popping wrong stash"))
+            (let ((stash-ref (code-review-minimal--find-stash-ref saved-sha)))
+              (if (null stash-ref)
+                  (progn
+                    (delete-file file)
+                    (message
+                     "code-review-minimal: recorded stash %s not found \
+in stash list; skipping restore"
+                     (substring saved-sha 0 (min 8 (length saved-sha)))))
+                (let ((errbuf (get-buffer-create " *crm-stash-err*")))
+                  (with-current-buffer errbuf (erase-buffer))
+                  (let ((rc (call-process "git" nil (list errbuf t) nil
+                                          "stash" "pop" stash-ref)))
+                    (if (and (integerp rc) (zerop rc))
+                        (progn
+                          (delete-file file)
+                          (message
+                           "code-review-minimal: restored stashed \
+changes (%s)" stash-ref))
+                      (let ((err (with-current-buffer errbuf (buffer-string))))
+                        (message
+                         "code-review-minimal: git stash pop %s failed%s"
+                         stash-ref
+                         (if (string-empty-p err)
+                             ""
+                           (format " \u2014 %s" (string-trim err))))))))))))))))
 
 ;;;; ─── Reentrancy Guard ───────────────────────────────────────────────────────
 
@@ -304,7 +358,7 @@ the user accepts the empty default."
                    branch
                    (if (string-empty-p err)
                        ""
-                     (format " — %s" (string-trim err)))))))
+                     (format " \u2014 %s" (string-trim err)))))))
             (message "code-review-minimal: checked out branch %s" branch)
             ;; Revert the buffer so its content matches the newly-checked-out
             ;; file; the diff's new-file line numbers reference this version.
