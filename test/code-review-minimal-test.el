@@ -785,6 +785,7 @@ returns nil — the hash key for a buffer with no git repo."
 (ert-deftest crm-all-thread-positions-single-buffer ()
   "Test collecting thread positions from a single buffer."
   (with-temp-buffer
+    (setq buffer-file-name "/tmp/crm-test-single.el")
     (insert "line1\nline2\nline3")
     (setq code-review-minimal-mode t)
     (setq code-review-minimal--overlays nil)
@@ -805,6 +806,7 @@ returns nil — the hash key for a buffer with no git repo."
         (progn
           ;; Buffer 1: overlay on line 1
           (with-current-buffer buf1
+            (setq buffer-file-name "/tmp/crm-test-multi-1.el")
             (insert "a\nb\nc")
             (setq code-review-minimal-mode t)
             (setq code-review-minimal--overlays nil)
@@ -814,6 +816,7 @@ returns nil — the hash key for a buffer with no git repo."
               (push ov code-review-minimal--overlays)))
           ;; Buffer 2: overlay on line 3
           (with-current-buffer buf2
+            (setq buffer-file-name "/tmp/crm-test-multi-2.el")
             (insert "x\ny\nz")
             (setq code-review-minimal-mode t)
             (setq code-review-minimal--overlays nil)
@@ -821,8 +824,9 @@ returns nil — the hash key for a buffer with no git repo."
                                     (crm-test--line-end 3))))
               (overlay-put ov 'code-review-minimal t)
               (push ov code-review-minimal--overlays)))
-          ;; Collect and verify sorting
-          (let ((result (code-review-minimal--all-thread-positions)))
+          ;; Collect from buf1 (git-root is nil for /tmp → permissive filter)
+          (let ((result (with-current-buffer buf1
+                          (code-review-minimal--all-thread-positions))))
             (should (= (length result) 2))
             (should (= (cdr (car result)) 1))
             (should (= (cdr (cadr result)) 3))))
@@ -839,6 +843,7 @@ returns nil — the hash key for a buffer with no git repo."
 (ert-deftest crm-all-thread-positions-dedup ()
   "Test that multiple overlays on the same line are deduplicated."
   (with-temp-buffer
+    (setq buffer-file-name "/tmp/crm-test-dedup.el")
     (insert "line1\nline2\nline3")
     (setq code-review-minimal-mode t)
     (setq code-review-minimal--overlays nil)
@@ -893,8 +898,8 @@ returns nil — the hash key for a buffer with no git repo."
       (should (= (line-number-at-pos) 1))
       (code-review-minimal--clear-overlays))))
 
-(ert-deftest crm-next-thread-wraps ()
-  "Test that next-thread wraps around to the first thread."
+(ert-deftest crm-next-thread-at-boundary ()
+  "Test that next-thread stops at the last thread instead of wrapping."
   (with-temp-buffer
     (setq buffer-file-name "/tmp/crm-test-next-wrap.el")
     (insert "line1\nline2\nline3")
@@ -911,14 +916,14 @@ returns nil — the hash key for a buffer with no git repo."
         (overlay-put ov2 'code-review-minimal t)
         (push ov1 code-review-minimal--overlays)
         (push ov2 code-review-minimal--overlays))
-      ;; Point on line 3, next thread wraps to line 1
+      ;; Point on line 3 (last thread); next-thread should stay at line 3
       (goto-char (crm-test--line-beg 3))
       (code-review-minimal-next-thread)
-      (should (= (line-number-at-pos) 1))
+      (should (= (line-number-at-pos) 3))
       (code-review-minimal--clear-overlays))))
 
-(ert-deftest crm-previous-thread-wraps ()
-  "Test that previous-thread wraps around to the last thread."
+(ert-deftest crm-previous-thread-at-boundary ()
+  "Test that previous-thread stops at the first thread instead of wrapping."
   (with-temp-buffer
     (setq buffer-file-name "/tmp/crm-test-prev-wrap.el")
     (insert "line1\nline2\nline3")
@@ -935,10 +940,10 @@ returns nil — the hash key for a buffer with no git repo."
         (overlay-put ov2 'code-review-minimal t)
         (push ov1 code-review-minimal--overlays)
         (push ov2 code-review-minimal--overlays))
-      ;; Point on line 1, previous thread wraps to line 3
+      ;; Point on line 1 (first thread); previous-thread should stay at line 1
       (goto-char (crm-test--line-beg 1))
       (code-review-minimal-previous-thread)
-      (should (= (line-number-at-pos) 3))
+      (should (= (line-number-at-pos) 1))
       (code-review-minimal--clear-overlays))))
 
 (ert-deftest crm-next-thread-no-overlays ()

@@ -371,21 +371,29 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
 ;;;; ─── Thread Navigation Helpers ──────────────────────────────────────────────
 
 (defun code-review-minimal--all-thread-positions ()
-  "Return a sorted list of (ABS-PATH . LINE) for every comment thread overlay.
-Scans all live buffers with `code-review-minimal-mode' active.
+  "Return a sorted list of (ABS-PATH . LINE) for every comment thread overlay
+in the current project (git root).
+Scans all live buffers with `code-review-minimal-mode' active whose
+`buffer-file-name' is under the current git root, so thread navigation
+never crosses project boundaries.
 Returns nil when no comment overlays are found."
-  (let ((result nil))
+  (let ((result nil)
+        (root (code-review-minimal--git-root)))
     (dolist (buf (buffer-list))
       (with-current-buffer buf
         (when (and (bound-and-true-p code-review-minimal-mode)
-                   code-review-minimal--overlays)
+                   code-review-minimal--overlays
+                   buffer-file-name
+                   ;; Only include buffers that belong to the current project.
+                   (or (null root)
+                       (string-prefix-p root
+                                        (expand-file-name buffer-file-name))))
           (dolist (ov code-review-minimal--overlays)
             (when (and (overlay-buffer ov)
                        (overlay-get ov 'code-review-minimal))
               (let* ((pos (overlay-start ov))
                      (line (line-number-at-pos pos))
-                     (abs (expand-file-name
-                           (or buffer-file-name default-directory))))
+                     (abs (expand-file-name buffer-file-name)))
                 (push (cons abs line) result)))))))
     ;; Deduplicate and sort.
     (delete-dups
@@ -508,57 +516,43 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
 
 ;;;###autoload
 (defun code-review-minimal-next-thread ()
-  "Move point to the next comment thread, opening other files if needed.
-Wraps around to the first thread after the last one."
+  "Move point to the next comment thread within the current project.
+Stops at the last thread with a message rather than wrapping to the first."
   (interactive)
   (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-thread-positions))
-         (cur (code-review-minimal--current-thread-key)))
-    (message
-     "[crm-thread] next-thread: all-count=%d cur=%S"
-     (length all) cur)
-    (let ((next
-           (or (cl-find-if
+         (cur (code-review-minimal--current-thread-key))
+         (next (cl-find-if
                 (lambda (entry)
                   (or (string< (car cur) (car entry))
                       (and (string= (car cur) (car entry))
                            (< (cdr cur) (cdr entry)))))
-                all)
-               ;; wrap around to first thread
-               (car all))))
-      (if next
-          (code-review-minimal--goto-hunk (car next) (cdr next))
-        (user-error
-         "code-review-minimal: no comment threads found")))))
+                all)))
+    (if next
+        (code-review-minimal--goto-hunk (car next) (cdr next))
+      (message "code-review-minimal: no more comment threads in this project"))))
 
 ;;;###autoload
 (defun code-review-minimal-previous-thread ()
-  "Move point to the previous comment thread, opening other files if needed.
-Wraps around to the last thread before the first one."
+  "Move point to the previous comment thread within the current project.
+Stops at the first thread with a message rather than wrapping to the last."
   (interactive)
   (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-thread-positions))
-         (cur (code-review-minimal--current-thread-key)))
-    (message
-     "[crm-thread] previous-thread: all-count=%d cur=%S"
-     (length all) cur)
-    (let ((prev
-           (or (cl-find-if
+         (cur (code-review-minimal--current-thread-key))
+         (prev (cl-find-if
                 (lambda (entry)
                   (or (string< (car entry) (car cur))
                       (and (string= (car entry) (car cur))
                            (< (cdr entry) (cdr cur)))))
-                (reverse all))
-               ;; wrap around to last thread
-               (car (last all)))))
-      (if prev
-          (code-review-minimal--goto-hunk (car prev) (cdr prev))
-        (user-error
-         "code-review-minimal: no comment threads found")))))
+                (reverse all))))
+    (if prev
+        (code-review-minimal--goto-hunk (car prev) (cdr prev))
+      (message "code-review-minimal: no more comment threads in this project"))))
 
 ;;;; ─── Backend Dispatch ───────────────────────────────────────────────────────
 

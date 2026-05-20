@@ -421,51 +421,43 @@ into the target buffer so that hunk navigation continues to work there."
 
 ;;;###autoload
 (defun code-review-minimal-next-hunk ()
-  "Move point to the next diff hunk, opening other files in the MR if needed.
-Wraps around to the first hunk after the last one."
-  (interactive)
-  (unless (code-review-minimal--review-in-progress-p)
-    (user-error
-     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
-  (let* ((all (code-review-minimal--all-hunk-positions))
-         (cur (code-review-minimal--current-hunk-key)))
-    (let ((next
-           (or (cl-find-if
-                (lambda (entry)
-                  (or (string< (car cur) (car entry))
-                      (and (string= (car cur) (car entry))
-                           (< (cdr cur) (cdr entry)))))
-                all)
-               ;; wrap around to first hunk
-               (car all))))
-      (if next
-          (code-review-minimal--goto-hunk (car next) (cdr next))
-        (user-error
-         "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first")))))
-
-;;;###autoload
-(defun code-review-minimal-previous-hunk ()
-  "Move point to the previous diff hunk, opening other files in the MR if needed.
-Wraps around to the last hunk before the first one."
+  "Move point to the next diff hunk within the current project.
+Stops at the last hunk with a message rather than wrapping to the first."
   (interactive)
   (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-hunk-positions))
          (cur (code-review-minimal--current-hunk-key))
-         (prev
-          (or (cl-find-if
-               (lambda (entry)
-                 (or (string< (car entry) (car cur))
-                     (and (string= (car entry) (car cur))
-                          (< (cdr entry) (cdr cur)))))
-               (reverse all))
-              ;; wrap around to last hunk
-              (car (last all)))))
+         (next (cl-find-if
+                (lambda (entry)
+                  (or (string< (car cur) (car entry))
+                      (and (string= (car cur) (car entry))
+                           (< (cdr cur) (cdr entry)))))
+                all)))
+    (if next
+        (code-review-minimal--goto-hunk (car next) (cdr next))
+      (message "code-review-minimal: no more hunks in this project"))))
+
+;;;###autoload
+(defun code-review-minimal-previous-hunk ()
+  "Move point to the previous diff hunk within the current project.
+Stops at the first hunk with a message rather than wrapping to the last."
+  (interactive)
+  (unless (code-review-minimal--review-in-progress-p)
+    (user-error
+     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
+  (let* ((all (code-review-minimal--all-hunk-positions))
+         (cur (code-review-minimal--current-hunk-key))
+         (prev (cl-find-if
+                (lambda (entry)
+                  (or (string< (car entry) (car cur))
+                      (and (string= (car entry) (car cur))
+                           (< (cdr entry) (cdr cur)))))
+                (reverse all))))
     (if prev
         (code-review-minimal--goto-hunk (car prev) (cdr prev))
-      (user-error
-       "code-review-minimal: diff not cached yet — run `code-review-minimal-review-url' first"))))
+      (message "code-review-minimal: no more hunks in this project"))))
 
 ;;;; ─── Diff Cache ─────────────────────────────────────────────────────────────
 
