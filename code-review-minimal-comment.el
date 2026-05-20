@@ -508,12 +508,11 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
 ;;;###autoload
 (defun code-review-minimal-next-thread ()
   "Move point to the next comment thread, opening other files if needed.
-If `code-review-minimal-mode' is not active in the current buffer, it is
-enabled automatically (which may prompt for a review URL if no MR is cached).
 Wraps around to the first thread after the last one."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
-    (code-review-minimal-mode 1))
+  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
+    (user-error
+     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-thread-positions))
          (cur (code-review-minimal--current-thread-key)))
     (message
@@ -536,12 +535,11 @@ Wraps around to the first thread after the last one."
 ;;;###autoload
 (defun code-review-minimal-previous-thread ()
   "Move point to the previous comment thread, opening other files if needed.
-If `code-review-minimal-mode' is not active in the current buffer, it is
-enabled automatically (which may prompt for a review URL if no MR is cached).
 Wraps around to the last thread before the first one."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
-    (code-review-minimal-mode 1))
+  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
+    (user-error
+     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-thread-positions))
          (cur (code-review-minimal--current-thread-key)))
     (message

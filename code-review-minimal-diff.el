@@ -422,9 +422,9 @@ into the target buffer so that hunk navigation continues to work there."
   "Move point to the next diff hunk, opening other files in the MR if needed.
 Wraps around to the first hunk after the last one."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
+     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-hunk-positions))
          (cur (code-review-minimal--current-hunk-key)))
     (message
@@ -453,9 +453,9 @@ Wraps around to the first hunk after the last one."
   "Move point to the previous diff hunk, opening other files in the MR if needed.
 Wraps around to the last hunk before the first one."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
+     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-hunk-positions))
          (cur (code-review-minimal--current-hunk-key))
          (prev
