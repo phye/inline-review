@@ -695,21 +695,34 @@
 ;;;; ───────────────────────────────────────────────────────────────────────────
 
 (ert-deftest crm-finish-review-clears-state ()
-  "Test that finish-review clears global state."
+  "Test that finish-review clears per-project state.
+`default-directory' is bound to /tmp so `code-review-minimal--git-root'
+returns nil — the hash key for a buffer with no git repo."
   (with-temp-buffer
-    (let ((code-review-minimal--diff-cache (make-hash-table :test 'equal))
+    ;; Isolate from whatever git repo `make test' runs inside.
+    (let ((default-directory "/tmp/")
+          (code-review-minimal--diff-cache (make-hash-table :test 'equal))
           (code-review-minimal--iid-cache (make-hash-table :test 'equal))
-          (code-review-minimal--backend-cache (make-hash-table :test 'equal)))
-      ;; Populate caches
-      (puthash "key" 'value code-review-minimal--diff-cache)
-      (puthash "key" 42 code-review-minimal--iid-cache)
-      (puthash "key" 'github code-review-minimal--backend-cache)
+          (code-review-minimal--backend-cache (make-hash-table :test 'equal))
+          (code-review-minimal--review-active-cache (make-hash-table :test 'equal)))
+      ;; Set buffer-local MR state so finish-review can build the diff-cache key.
+      (setq code-review-minimal--current-backend 'github)
+      (setq code-review-minimal--mr-iid 42)
+      (setq code-review-minimal--project-info nil)
+      ;; With default-directory=/tmp/ and no buffer-file-name, git-root returns nil.
+      ;; iid/backend/review-active caches use nil key; diff-cache uses (list 'github 42 nil).
+      (puthash nil 42 code-review-minimal--iid-cache)
+      (puthash nil 'github code-review-minimal--backend-cache)
+      (puthash nil 42 code-review-minimal--review-active-cache)
+      (puthash (code-review-minimal--diff-cache-key 'github 42 nil)
+               'value code-review-minimal--diff-cache)
       ;; Call finish-review
       (code-review-minimal-finish-review)
-      ;; Verify caches are cleared
+      ;; Verify per-project entries are cleared
       (should (= (hash-table-count code-review-minimal--diff-cache) 0))
       (should (= (hash-table-count code-review-minimal--iid-cache) 0))
-      (should (= (hash-table-count code-review-minimal--backend-cache) 0)))))
+      (should (= (hash-table-count code-review-minimal--backend-cache) 0))
+      (should (= (hash-table-count code-review-minimal--review-active-cache) 0)))))
 
 ;;;; ───────────────────────────────────────────────────────────────────────────
 ;;;;  Toggle hide-resolved
@@ -847,15 +860,18 @@
     (insert "line1\nline2\nline3")
     (setq code-review-minimal-mode t)
     (setq code-review-minimal--overlays nil)
-    (let ((ov (make-overlay (crm-test--line-beg 3)
-                            (crm-test--line-end 3))))
-      (overlay-put ov 'code-review-minimal t)
-      (push ov code-review-minimal--overlays))
-    ;; Point on line 1, next thread should be line 3
-    (goto-char (point-min))
-    (code-review-minimal-next-thread)
-    (should (= (line-number-at-pos) 3))
-    (code-review-minimal--clear-overlays)))
+    ;; git-root is nil for /tmp; seed review-active-cache so the guard passes.
+    (let ((code-review-minimal--review-active-cache (make-hash-table :test 'equal)))
+      (puthash nil 42 code-review-minimal--review-active-cache)
+      (let ((ov (make-overlay (crm-test--line-beg 3)
+                              (crm-test--line-end 3))))
+        (overlay-put ov 'code-review-minimal t)
+        (push ov code-review-minimal--overlays))
+      ;; Point on line 1, next thread should be line 3
+      (goto-char (point-min))
+      (code-review-minimal-next-thread)
+      (should (= (line-number-at-pos) 3))
+      (code-review-minimal--clear-overlays))))
 
 (ert-deftest crm-previous-thread ()
   "Test jumping to the previous comment thread."
@@ -864,15 +880,18 @@
     (insert "line1\nline2\nline3")
     (setq code-review-minimal-mode t)
     (setq code-review-minimal--overlays nil)
-    (let ((ov (make-overlay (crm-test--line-beg 1)
-                            (crm-test--line-end 1))))
-      (overlay-put ov 'code-review-minimal t)
-      (push ov code-review-minimal--overlays))
-    ;; Point on line 3, previous thread should be line 1
-    (goto-char (point-max))
-    (code-review-minimal-previous-thread)
-    (should (= (line-number-at-pos) 1))
-    (code-review-minimal--clear-overlays)))
+    ;; git-root is nil for /tmp; seed review-active-cache so the guard passes.
+    (let ((code-review-minimal--review-active-cache (make-hash-table :test 'equal)))
+      (puthash nil 42 code-review-minimal--review-active-cache)
+      (let ((ov (make-overlay (crm-test--line-beg 1)
+                              (crm-test--line-end 1))))
+        (overlay-put ov 'code-review-minimal t)
+        (push ov code-review-minimal--overlays))
+      ;; Point on line 3, previous thread should be line 1
+      (goto-char (point-max))
+      (code-review-minimal-previous-thread)
+      (should (= (line-number-at-pos) 1))
+      (code-review-minimal--clear-overlays))))
 
 (ert-deftest crm-next-thread-wraps ()
   "Test that next-thread wraps around to the first thread."
@@ -881,19 +900,22 @@
     (insert "line1\nline2\nline3")
     (setq code-review-minimal-mode t)
     (setq code-review-minimal--overlays nil)
-    (let ((ov1 (make-overlay (crm-test--line-beg 1)
-                             (crm-test--line-end 1)))
-          (ov2 (make-overlay (crm-test--line-beg 3)
-                             (crm-test--line-end 3))))
-      (overlay-put ov1 'code-review-minimal t)
-      (overlay-put ov2 'code-review-minimal t)
-      (push ov1 code-review-minimal--overlays)
-      (push ov2 code-review-minimal--overlays))
-    ;; Point on line 3, next thread wraps to line 1
-    (goto-char (crm-test--line-beg 3))
-    (code-review-minimal-next-thread)
-    (should (= (line-number-at-pos) 1))
-    (code-review-minimal--clear-overlays)))
+    ;; git-root is nil for /tmp; seed review-active-cache so the guard passes.
+    (let ((code-review-minimal--review-active-cache (make-hash-table :test 'equal)))
+      (puthash nil 42 code-review-minimal--review-active-cache)
+      (let ((ov1 (make-overlay (crm-test--line-beg 1)
+                               (crm-test--line-end 1)))
+            (ov2 (make-overlay (crm-test--line-beg 3)
+                               (crm-test--line-end 3))))
+        (overlay-put ov1 'code-review-minimal t)
+        (overlay-put ov2 'code-review-minimal t)
+        (push ov1 code-review-minimal--overlays)
+        (push ov2 code-review-minimal--overlays))
+      ;; Point on line 3, next thread wraps to line 1
+      (goto-char (crm-test--line-beg 3))
+      (code-review-minimal-next-thread)
+      (should (= (line-number-at-pos) 1))
+      (code-review-minimal--clear-overlays))))
 
 (ert-deftest crm-previous-thread-wraps ()
   "Test that previous-thread wraps around to the last thread."
@@ -902,19 +924,22 @@
     (insert "line1\nline2\nline3")
     (setq code-review-minimal-mode t)
     (setq code-review-minimal--overlays nil)
-    (let ((ov1 (make-overlay (crm-test--line-beg 1)
-                             (crm-test--line-end 1)))
-          (ov2 (make-overlay (crm-test--line-beg 3)
-                             (crm-test--line-end 3))))
-      (overlay-put ov1 'code-review-minimal t)
-      (overlay-put ov2 'code-review-minimal t)
-      (push ov1 code-review-minimal--overlays)
-      (push ov2 code-review-minimal--overlays))
-    ;; Point on line 1, previous thread wraps to line 3
-    (goto-char (crm-test--line-beg 1))
-    (code-review-minimal-previous-thread)
-    (should (= (line-number-at-pos) 3))
-    (code-review-minimal--clear-overlays)))
+    ;; git-root is nil for /tmp; seed review-active-cache so the guard passes.
+    (let ((code-review-minimal--review-active-cache (make-hash-table :test 'equal)))
+      (puthash nil 42 code-review-minimal--review-active-cache)
+      (let ((ov1 (make-overlay (crm-test--line-beg 1)
+                               (crm-test--line-end 1)))
+            (ov2 (make-overlay (crm-test--line-beg 3)
+                               (crm-test--line-end 3))))
+        (overlay-put ov1 'code-review-minimal t)
+        (overlay-put ov2 'code-review-minimal t)
+        (push ov1 code-review-minimal--overlays)
+        (push ov2 code-review-minimal--overlays))
+      ;; Point on line 1, previous thread wraps to line 3
+      (goto-char (crm-test--line-beg 1))
+      (code-review-minimal-previous-thread)
+      (should (= (line-number-at-pos) 3))
+      (code-review-minimal--clear-overlays))))
 
 (ert-deftest crm-next-thread-no-overlays ()
   "Test that next-thread errors when no overlays exist."

@@ -46,6 +46,18 @@ so the result is safe for a git branch name."
 
 ;;;; ─── Original Branch Save / Restore ─────────────────────────────────────────
 
+(defun code-review-minimal--load-original-branch ()
+  "Return the persisted original branch for the current repo, or nil."
+  (when-let ((root (code-review-minimal--git-root)))
+    (let ((file
+           (expand-file-name "code-review-minimal-original-branch"
+                             (expand-file-name ".git" root))))
+      (when (file-readable-p file)
+        (string-trim
+         (with-temp-buffer
+           (insert-file-contents file)
+           (buffer-string)))))))
+
 (defun code-review-minimal--save-original-branch ()
   "Save the current git branch to `.git/code-review-minimal-original-branch'.
 Only writes the file if it does not already exist, so the true original
@@ -63,18 +75,6 @@ session."
           (when (and (not (string-empty-p current))
                      (not (string= current "HEAD")))
             (write-region current nil file nil 'silent)))))))
-
-(defun code-review-minimal--load-original-branch ()
-  "Return the persisted original branch for the current repo, or nil."
-  (when-let ((root (code-review-minimal--git-root)))
-    (let ((file
-           (expand-file-name "code-review-minimal-original-branch"
-                             (expand-file-name ".git" root))))
-      (when (file-readable-p file)
-        (string-trim
-         (with-temp-buffer
-           (insert-file-contents file)
-           (buffer-string)))))))
 
 ;;;; ─── Worktree Stash ─────────────────────────────────────────────────────────
 
@@ -140,24 +140,17 @@ Signals an error if the stash command fails."
 ;;;; ─── Reentrancy Guard ───────────────────────────────────────────────────────
 
 (defun code-review-minimal--review-in-progress-p ()
-  "Return non-nil if a review session is currently active.
+  "Return non-nil if a review session is currently active for the current project.
+Checks the current git root only, so reviews in other projects are unaffected.
 Checks for:
-- `code-review-minimal-mode' active in any live buffer
-- cached IID or backend for the current repository
-- saved original-branch file for the current repository"
-  (or
-   ;; Mode active in any buffer
-   (cl-some (lambda (buf)
-              (with-current-buffer buf
-                (bound-and-true-p code-review-minimal-mode)))
-            (buffer-list))
-   ;; Cached IID in memory
-   (when-let ((root (code-review-minimal--git-root)))
-     (gethash root code-review-minimal--iid-cache))
-   ;; Cached IID on disk
-   (code-review-minimal--load-cached-iid)
-   ;; Saved original branch
-   (code-review-minimal--load-original-branch)))
+- a fully-prepared review recorded in `code-review-minimal--review-active-cache'
+- a saved original-branch file (crash-recovery: survives an Emacs restart)"
+  (let ((root (code-review-minimal--git-root)))
+    (or
+     ;; Check the in-memory cache keyed by git root (nil when outside a repo).
+     (gethash root code-review-minimal--review-active-cache)
+     ;; Saved original branch on disk (crash-recovery)
+     (code-review-minimal--load-original-branch))))
 
 ;;;; ─── Auto Checkout via Forge Refs ───────────────────────────────────────────
 

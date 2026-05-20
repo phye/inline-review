@@ -50,6 +50,7 @@
 (require 'cl-lib)
 (require 'code-review-minimal-custom)
 (require 'code-review-minimal-backend)
+(require 'code-review-minimal-branch)
 
 ;; Forward declarations — authoritative definitions are in sibling files.
 (declare-function code-review-minimal--refresh-overlays
@@ -510,7 +511,7 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
   "Move point to the next comment thread, opening other files if needed.
 Wraps around to the first thread after the last one."
   (interactive)
-  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
+  (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-thread-positions))
@@ -537,7 +538,7 @@ Wraps around to the first thread after the last one."
   "Move point to the previous comment thread, opening other files if needed.
 Wraps around to the last thread before the first one."
   (interactive)
-  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
+  (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-thread-positions))

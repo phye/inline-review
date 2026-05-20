@@ -26,6 +26,8 @@
 (require 'cl-lib)
 (require 'code-review-minimal-custom)
 (require 'code-review-minimal-backend)
+(require 'code-review-minimal-branch)
+(require 'code-review-minimal-branch)
 
 ;; Forward declaration — authoritative definition is in code-review-minimal.el.
 (defvar code-review-minimal-mode)
@@ -422,13 +424,10 @@ into the target buffer so that hunk navigation continues to work there."
   "Move point to the next diff hunk, opening other files in the MR if needed.
 Wraps around to the first hunk after the last one."
   (interactive)
-  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
+  (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-hunk-positions))
-         (cur (code-review-minimal--current-hunk-key)))
-    (message
-     "[crm-hunk] next-hunk: backend=%S iid=%S cache-size=%d all-count=%d cur=%S"
      code-review-minimal--current-backend
      code-review-minimal--mr-iid
      (hash-table-count code-review-minimal--diff-cache)
@@ -453,7 +452,7 @@ Wraps around to the first hunk after the last one."
   "Move point to the previous diff hunk, opening other files in the MR if needed.
 Wraps around to the last hunk before the first one."
   (interactive)
-  (unless (or (code-review-minimal--load-cached-iid) code-review-minimal--mr-iid)
+  (unless (code-review-minimal--review-in-progress-p)
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-hunk-positions))

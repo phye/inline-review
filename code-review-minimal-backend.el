@@ -348,6 +348,15 @@ Supported URL formats:
   "In-memory cache mapping MR key → list of change plists.
 The key is produced by `code-review-minimal--diff-cache-key'.")
 
+(defvar code-review-minimal--review-active-cache
+  (make-hash-table :test 'equal)
+  "In-memory cache mapping git-root (string) → active MR IID (integer).
+Set only after `code-review-minimal-review-url' finishes all preparation
+steps (branch checkout + mode activation).  Cleared per-project by
+`code-review-minimal-finish-review'.  Multiple projects may have
+simultaneous active entries.")
+
+
 (defun code-review-minimal--git-root ()
   "Return the absolute path to the git root for the current buffer, or nil."
   (when-let ((root

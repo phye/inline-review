@@ -197,7 +197,13 @@ Call `code-review-minimal-finish-review' first"))
                   ;; Enable mode (which refreshes overlays) or just refresh if already on
                   (if (bound-and-true-p code-review-minimal-mode)
                       (code-review-minimal--refresh-overlays)
-                    (code-review-minimal-mode 1)))))
+                    (code-review-minimal-mode 1))
+                  ;; Mark this project as fully prepared so navigation commands
+                  ;; (next-hunk, previous-hunk, next-thread, previous-thread)
+                  ;; know a live review exists here.  Other projects are unaffected.
+                  (when-let ((root (code-review-minimal--git-root)))
+                    (puthash root iid
+                             code-review-minimal--review-active-cache)))))
              (resolve-branches-fn
               (code-review-minimal--backend-prop
                code-review-minimal--current-backend :resolve-branches)))
@@ -221,19 +227,33 @@ Call `code-review-minimal-finish-review' first"))
 
 ;;;###autoload
 (defun code-review-minimal-finish-review ()
-  "Finish the current review session and clean up all state.
+  "Finish the review session for the current project and clean up its state.
 
-Disables `code-review-minimal-mode' in every buffer that has it active,
-clears the diff cache, the IID/backend in-memory caches, and removes the
-per-repo cache files (.git/code-review-minimal-iid and
-.git/code-review-minimal-backend) so the next session starts fresh."
+Only the current project (git root) is affected; reviews in other projects
+continue uninterrupted.  Disables `code-review-minimal-mode' in every buffer
+belonging to this project, restores the original branch, clears the diff cache
+entry for this MR, removes the per-project in-memory caches, and deletes the
+per-repo cache files under .git/."
   (interactive)
-  (let ((root (code-review-minimal--git-root)))
-    ;; 0. Disable mode in all live buffers first so overlays are removed
-    ;; before the working tree changes underneath them.
+  (let* ((root (code-review-minimal--git-root))
+         ;; Capture MR identity from buffer-local state before mode teardown
+         ;; resets it.  Fall back to iid-cache in case we're called from a
+         ;; buffer that never had mode active.
+         (current-backend code-review-minimal--current-backend)
+         (current-iid    (or code-review-minimal--mr-iid
+                             (and root
+                                  (gethash root
+                                           code-review-minimal--iid-cache))))
+         (current-proj   code-review-minimal--project-info))
+    ;; 0. Disable mode in all live buffers that belong to this project so
+    ;; overlays are removed before the working tree changes underneath them.
     (dolist (buf (buffer-list))
       (with-current-buffer buf
-        (when (bound-and-true-p code-review-minimal-mode)
+        (when (and (bound-and-true-p code-review-minimal-mode)
+                   root
+                   buffer-file-name
+                   (string-prefix-p root
+                                    (expand-file-name buffer-file-name)))
           (code-review-minimal-mode -1))))
     ;; 1. Restore the original branch if one was saved.
     (when-let ((original (code-review-minimal--load-original-branch)))
@@ -246,9 +266,14 @@ per-repo cache files (.git/code-review-minimal-iid and
                 (message
                  "code-review-minimal: restored original branch %s" original)
                 (code-review-minimal--pop-stash)
+                ;; Only revert buffers belonging to this project.
                 (dolist (buf (buffer-list))
                   (with-current-buffer buf
                     (when (and buffer-file-name
+                               root
+                               (string-prefix-p root
+                                                (expand-file-name
+                                                 buffer-file-name))
                                (file-readable-p buffer-file-name))
                       (revert-buffer t t)))))
             (let ((err (with-current-buffer errbuf (buffer-string))))
@@ -258,11 +283,18 @@ per-repo cache files (.git/code-review-minimal-iid and
                (if (string-empty-p err)
                    ""
                  (format " — %s" (string-trim err)))))))))
-    ;; 2. Clear the global diff cache entirely.
-    (clrhash code-review-minimal--diff-cache)
-    ;; 3. Clear the in-memory IID and backend caches.
-    (clrhash code-review-minimal--iid-cache)
-    (clrhash code-review-minimal--backend-cache)
+    ;; 2. Remove the diff-cache entry for this MR.
+    (when (and current-backend current-iid)
+      (remhash
+       (code-review-minimal--diff-cache-key
+        current-backend current-iid current-proj)
+       code-review-minimal--diff-cache))
+    ;; 3. Remove this project's entries from the in-memory caches.
+    ;; `remhash' with any key (including nil) is safe — it only removes that
+    ;; specific entry and leaves the rest intact.  No root guard needed here.
+    (remhash root code-review-minimal--iid-cache)
+    (remhash root code-review-minimal--backend-cache)
+    (remhash root code-review-minimal--review-active-cache)
     ;; 4. Remove the per-repo cache files so IID/backend/original-branch
     ;; are not reused next time.
     (when root
