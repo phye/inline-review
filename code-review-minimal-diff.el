@@ -377,7 +377,7 @@ Returns nil when no diff data is cached yet."
                 (or (plist-get c :new-path) (plist-get c :old-path)))
                (abs (expand-file-name rel root))
                (patch (plist-get c :patch)))
-          (when (and rel patch)
+          (when (and rel patch (not (string= abs "/dev/null")))
             (dolist (hunk (code-review-minimal--parse-patch patch))
               (push (cons abs (plist-get hunk :new-start)) result)))))
       (sort result
@@ -428,11 +428,7 @@ Wraps around to the first hunk after the last one."
     (user-error
      "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
   (let* ((all (code-review-minimal--all-hunk-positions))
-     code-review-minimal--current-backend
-     code-review-minimal--mr-iid
-     (hash-table-count code-review-minimal--diff-cache)
-     (length all)
-     cur)
+         (cur (code-review-minimal--current-hunk-key)))
     (let ((next
            (or (cl-find-if
                 (lambda (entry)
