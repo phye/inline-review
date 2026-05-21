@@ -191,6 +191,39 @@ changes (%s)" stash-ref))
                              ""
                            (format " \u2014 %s" (string-trim err))))))))))))))))
 
+;;;; ─── Remote Sync ────────────────────────────────────────────────────────────
+
+(defun code-review-minimal--pull-current-branch ()
+  "Pull the current branch from its upstream if one is configured.
+Runs `git pull --ff-only'; silently skips when no upstream is set.
+Returns t if a pull was performed, nil otherwise."
+  (let* ((default-directory
+          (or (code-review-minimal--git-root) default-directory))
+         (upstream
+          (string-trim
+           (shell-command-to-string
+            "git rev-parse --abbrev-ref @{u} 2>/dev/null"))))
+    (when (and (not (string-empty-p upstream))
+               (not (string-match-p "^fatal" upstream)))
+      (let ((errbuf (get-buffer-create " *crm-pull-err*")))
+        (with-current-buffer errbuf (erase-buffer))
+        (let ((rc (call-process "git" nil (list errbuf t) nil
+                                "pull" "--ff-only")))
+          (if (and (integerp rc) (zerop rc))
+              (progn
+                (message
+                 "code-review-minimal: pulled latest changes from %s"
+                 upstream)
+                t)
+            (let ((err (with-current-buffer errbuf (buffer-string))))
+              (message
+               "code-review-minimal: git pull --ff-only failed%s \
+(proceeding with local version)"
+               (if (string-empty-p err)
+                   ""
+                 (format " \u2014 %s" (string-trim err))))
+              nil))))))  )
+
 ;;;; ─── Reentrancy Guard ───────────────────────────────────────────────────────
 
 (defun code-review-minimal--review-in-progress-p ()
@@ -259,6 +292,7 @@ should fall back to a manual flow when nil is returned."
                 (message
                  "code-review-minimal: checked out source branch %s"
                  local)
+                (code-review-minimal--pull-current-branch)
                 (when (and buffer-file-name
                            (file-readable-p buffer-file-name))
                   (revert-buffer t t))
@@ -360,6 +394,8 @@ the user accepts the empty default."
                        ""
                      (format " \u2014 %s" (string-trim err)))))))
             (message "code-review-minimal: checked out branch %s" branch)
+            ;; Pull to sync with remote before rendering overlays.
+            (code-review-minimal--pull-current-branch)
             ;; Revert the buffer so its content matches the newly-checked-out
             ;; file; the diff's new-file line numbers reference this version.
             (when (and buffer-file-name
