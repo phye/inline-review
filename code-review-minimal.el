@@ -184,26 +184,34 @@ Call `code-review-minimal-finish-review' first"))
              (proceed
               (lambda ()
                 (with-current-buffer initial-buf
-                  (code-review-minimal--checkout-branch-for-review)
-                  ;; revert-buffer (called during checkout) runs
-                  ;; kill-all-local-variables, which resets all defvar-local state
-                  ;; to nil.  Re-apply the values captured by this closure so that
-                  ;; mode activation succeeds even when the current buffer is not
-                  ;; among the files changed by the MR.
-                  (setq code-review-minimal--mr-iid iid
-                        code-review-minimal--project-info projinfo)
-                  (when backend
-                    (setq code-review-minimal--current-backend backend))
-                  ;; Enable mode (which refreshes overlays) or just refresh if already on
-                  (if (bound-and-true-p code-review-minimal-mode)
-                      (code-review-minimal--refresh-overlays)
-                    (code-review-minimal-mode 1))
-                  ;; Mark this project as fully prepared so navigation commands
-                  ;; (next-hunk, previous-hunk, next-thread, previous-thread)
-                  ;; know a live review exists here.  Other projects are unaffected.
-                  (when-let ((root (code-review-minimal--git-root)))
-                    (puthash root iid
-                             code-review-minimal--review-active-cache)))))
+                  ;; Capture branch names NOW, before checkout may call
+                  ;; revert-buffer → kill-all-local-variables and wipe them.
+                  (let ((src code-review-minimal--mr-source-branch)
+                        (tgt code-review-minimal--mr-target-branch))
+                    (code-review-minimal--checkout-branch-for-review)
+                    ;; revert-buffer (called during checkout) runs
+                    ;; kill-all-local-variables, which resets all defvar-local state
+                    ;; to nil.  Re-apply the values captured by this closure so that
+                    ;; mode activation succeeds even when the current buffer is not
+                    ;; among the files changed by the MR.
+                    (setq code-review-minimal--mr-iid iid
+                          code-review-minimal--project-info projinfo)
+                    (when backend
+                      (setq code-review-minimal--current-backend backend))
+                    (when src
+                      (setq code-review-minimal--mr-source-branch src))
+                    (when tgt
+                      (setq code-review-minimal--mr-target-branch tgt))
+                    ;; Enable mode (which refreshes overlays) or just refresh if already on
+                    (if (bound-and-true-p code-review-minimal-mode)
+                        (code-review-minimal--refresh-overlays)
+                      (code-review-minimal-mode 1))
+                    ;; Mark this project as fully prepared so navigation commands
+                    ;; (next-hunk, previous-hunk, next-thread, previous-thread)
+                    ;; know a live review exists here.  Other projects are unaffected.
+                    (when-let ((root (code-review-minimal--git-root)))
+                      (puthash root iid
+                               code-review-minimal--review-active-cache))))))
              (resolve-branches-fn
               (code-review-minimal--backend-prop
                code-review-minimal--current-backend :resolve-branches)))
@@ -328,6 +336,54 @@ posted a new comment)."
   (code-review-minimal--refresh-overlays))
 
 ;;;###autoload
+(defun code-review-minimal-overview ()
+  "Pop up a read-only buffer with `git diff --stat' between source and target branch.
+Shows a summary of which files changed and how many lines were added/removed,
+giving a quick overview of the scope of the MR/PR under review."
+  (interactive)
+  (unless (code-review-minimal--review-in-progress-p)
+    (user-error
+     "code-review-minimal: no active review — run `code-review-minimal-review-url' first"))
+  (let ((source code-review-minimal--mr-source-branch)
+        (target code-review-minimal--mr-target-branch)
+        (root   (code-review-minimal--git-root)))
+    (unless source
+      (user-error
+       "code-review-minimal: source branch not known yet \
+(wait for branch resolution to complete)"))
+    (unless target
+      (user-error
+       "code-review-minimal: target branch not known yet \
+(wait for branch resolution to complete)"))
+    (unless root
+      (user-error "code-review-minimal: not inside a git repository"))
+    (let* ((outbuf (get-buffer-create "*code-review-minimal-overview*"))
+           (errbuf (get-buffer-create " *crm-overview-err*"))
+           (default-directory root))
+      (with-current-buffer errbuf (erase-buffer))
+      (with-current-buffer outbuf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (let ((rc (call-process "git" nil (list outbuf errbuf) nil
+                                  "diff" "--stat"
+                                  target source)))
+            (if (and (integerp rc) (zerop rc))
+                (progn
+                  (goto-char (point-min))
+                  (view-mode 1))
+              (let ((err (with-current-buffer errbuf (buffer-string))))
+                (erase-buffer)
+                (insert
+                 (format "git diff --stat %s %s failed%s\n"
+                         target source
+                         (if (string-empty-p err)
+                             ""
+                           (format ": %s" (string-trim err)))))
+                (goto-char (point-min))
+                (view-mode 1))))))
+      (pop-to-buffer outbuf))))
+
+;;;###autoload
 (defun code-review-minimal-set-backend-for-repo (backend)
   "Set and persist the backend for the current repository.
 Use this to override auto-detection."
@@ -367,6 +423,7 @@ Commands:
   `code-review-minimal-reply-comment'     - reply to comment thread at point
   `code-review-minimal-delete-comment'    - delete comment at point
   `code-review-minimal-refresh'           - re-fetch comments
+  `code-review-minimal-overview'          - show git diff --stat for this MR/PR
   `code-review-minimal-next-thread'        - go to next comment thread (cross-file)
   `code-review-minimal-previous-thread'    - go to previous comment thread (cross-file)
   `code-review-minimal-next-hunk'          - go to next diff hunk (cross-file)
