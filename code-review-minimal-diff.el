@@ -394,13 +394,16 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
 (defun code-review-minimal--goto-hunk (abs-path line)
   "Visit ABS-PATH (opening it if needed) and move point to LINE.
 Ensures `code-review-minimal-mode' is active in the target buffer.
-MR state (backend, iid, project-info) is propagated from the calling buffer
-into the target buffer so that hunk navigation continues to work there."
+MR state (backend, iid, project-info, source/target branch) is propagated
+from the calling buffer into the target buffer so that hunk navigation
+and overview continue to work there."
   ;; Capture MR state from the calling buffer before any buffer switch.
-  (let ((src-backend code-review-minimal--current-backend)
-        (src-iid code-review-minimal--mr-iid)
-        (src-mr-id code-review-minimal--mr-id)
-        (src-proj code-review-minimal--project-info))
+  (let ((src-backend       code-review-minimal--current-backend)
+        (src-iid           code-review-minimal--mr-iid)
+        (src-mr-id         code-review-minimal--mr-id)
+        (src-proj          code-review-minimal--project-info)
+        (src-source-branch code-review-minimal--mr-source-branch)
+        (src-target-branch code-review-minimal--mr-target-branch))
     (unless (and buffer-file-name
                  (string=
                   (expand-file-name buffer-file-name) abs-path))
@@ -414,6 +417,10 @@ into the target buffer so that hunk navigation continues to work there."
       (setq code-review-minimal--mr-id src-mr-id))
     (when (and src-proj (not code-review-minimal--project-info))
       (setq code-review-minimal--project-info src-proj))
+    (when (and src-source-branch (not code-review-minimal--mr-source-branch))
+      (setq code-review-minimal--mr-source-branch src-source-branch))
+    (when (and src-target-branch (not code-review-minimal--mr-target-branch))
+      (setq code-review-minimal--mr-target-branch src-target-branch))
     (unless (bound-and-true-p code-review-minimal-mode)
       (code-review-minimal-mode 1))
     (goto-char (point-min))

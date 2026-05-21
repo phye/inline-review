@@ -347,6 +347,20 @@ giving a quick overview of the scope of the MR/PR under review."
   (let ((source code-review-minimal--mr-source-branch)
         (target code-review-minimal--mr-target-branch)
         (root   (code-review-minimal--git-root)))
+    ;; Fallback: if the current buffer doesn't have branch names (e.g. the
+    ;; user called `overview' from a file that was never opened via
+    ;; `--goto-hunk'), scan all live buffers where code-review-minimal-mode
+    ;; is active and borrow the names from the first one that has them.
+    (unless (and source target)
+      (dolist (buf (buffer-list))
+        (when (and (not (and source target))
+                   (buffer-live-p buf))
+          (with-current-buffer buf
+            (when (bound-and-true-p code-review-minimal-mode)
+              (when (and (not source) code-review-minimal--mr-source-branch)
+                (setq source code-review-minimal--mr-source-branch))
+              (when (and (not target) code-review-minimal--mr-target-branch)
+                (setq target code-review-minimal--mr-target-branch)))))))
     (unless source
       (user-error
        "code-review-minimal: source branch not known yet \
