@@ -1,4 +1,4 @@
-;;; code-review-minimal-branch.el --- Branch checkout and restore for code-review-minimal -*- lexical-binding: t; -*-
+;;; inline-review-branch.el --- Branch checkout and restore for inline-review -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
@@ -6,34 +6,34 @@
 ;;; Commentary:
 ;;
 ;; Branch checkout, original-branch save/restore, and worktree stash
-;; management for code-review-minimal.
+;; management for inline-review.
 ;;
-;; Public API (called from code-review-minimal.el):
-;;   `code-review-minimal--review-in-progress-p'
-;;   `code-review-minimal--checkout-branch-for-review'
-;;   `code-review-minimal--save-original-branch'
-;;   `code-review-minimal--load-original-branch'
-;;   `code-review-minimal--pop-stash'
+;; Public API (called from inline-review.el):
+;;   `inline-review--review-in-progress-p'
+;;   `inline-review--checkout-branch-for-review'
+;;   `inline-review--save-original-branch'
+;;   `inline-review--load-original-branch'
+;;   `inline-review--pop-stash'
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'code-review-minimal-backend)
+(require 'inline-review-backend)
 
-;; Forward declaration — the authoritative defvar is in code-review-minimal.el.
-(defvar code-review-minimal-mode)
+;; Forward declaration — the authoritative defvar is in inline-review.el.
+(defvar inline-review-mode)
 
 ;;;; ─── Owner / Repo String ────────────────────────────────────────────────────
 
-(defun code-review-minimal--owner-repo-string ()
-  "Return a sanitized `owner_repo' string from `code-review-minimal--project-info'.
+(defun inline-review--owner-repo-string ()
+  "Return a sanitized `owner_repo' string from `inline-review--project-info'.
 GitHub uses owner/repo from the project-info alist.
 GitLab/Gongfeng use the URL-decoded `project-id' with slashes replaced.
 Non-alphanumeric characters (outside `._-') are replaced with underscores
 so the result is safe for a git branch name."
-  (let ((owner (alist-get 'owner code-review-minimal--project-info))
-        (repo (alist-get 'repo code-review-minimal--project-info))
-        (project-id (alist-get 'project-id code-review-minimal--project-info)))
+  (let ((owner (alist-get 'owner inline-review--project-info))
+        (repo (alist-get 'repo inline-review--project-info))
+        (project-id (alist-get 'project-id inline-review--project-info)))
     (let ((s
            (cond
             ((and owner repo)
@@ -46,11 +46,11 @@ so the result is safe for a git branch name."
 
 ;;;; ─── Original Branch Save / Restore ─────────────────────────────────────────
 
-(defun code-review-minimal--load-original-branch ()
+(defun inline-review--load-original-branch ()
   "Return the persisted original branch for the current repo, or nil."
-  (when-let ((root (code-review-minimal--git-root)))
+  (when-let ((root (inline-review--git-root)))
     (let ((file
-           (expand-file-name "code-review-minimal-original-branch"
+           (expand-file-name "inline-review-original-branch"
                              (expand-file-name ".git" root))))
       (when (file-readable-p file)
         (string-trim
@@ -58,14 +58,14 @@ so the result is safe for a git branch name."
            (insert-file-contents file)
            (buffer-string)))))))
 
-(defun code-review-minimal--save-original-branch ()
-  "Save the current git branch to `.git/code-review-minimal-original-branch'.
+(defun inline-review--save-original-branch ()
+  "Save the current git branch to `.git/inline-review-original-branch'.
 Only writes the file if it does not already exist, so the true original
 branch is preserved across repeated `review-url' calls in the same
 session."
-  (when-let ((root (code-review-minimal--git-root)))
+  (when-let ((root (inline-review--git-root)))
     (let ((file
-           (expand-file-name "code-review-minimal-original-branch"
+           (expand-file-name "inline-review-original-branch"
                              (expand-file-name ".git" root))))
       (unless (file-exists-p file)
         (let ((current
@@ -78,7 +78,7 @@ session."
 
 ;;;; ─── Worktree Stash ─────────────────────────────────────────────────────────
 
-(defun code-review-minimal--stash-worktree ()
+(defun inline-review--stash-worktree ()
   "Stash the current worktree if dirty and record the stash SHA.
 Only tracked changes (staged or unstaged modifications) trigger a stash;
 untracked files are deliberately ignored so that a workspace containing
@@ -86,7 +86,7 @@ only new/untracked files is not considered dirty.
 Returns t if a stash was created, nil if the worktree was already clean.
 Signals an error if the stash command fails."
   (let* ((default-directory
-          (or (code-review-minimal--git-root) default-directory))
+          (or (inline-review--git-root) default-directory))
          (raw (shell-command-to-string "git status --porcelain 2>/dev/null"))
          ;; Exclude untracked ("?? ") and ignored ("!! ") lines; only tracked
          ;; changes (modifications, deletions, renames, copies) are relevant.
@@ -98,37 +98,37 @@ Signals an error if the stash command fails."
         (with-current-buffer errbuf (erase-buffer))
         (let ((rc (call-process "git" nil (list errbuf t) nil
                                 "stash" "push" "-m"
-                                "code-review-minimal auto-stash")))
+                                "inline-review auto-stash")))
           (if (and (integerp rc) (zerop rc))
               (let ((sha (string-trim
                           (shell-command-to-string
                            "git rev-parse stash@{0} 2>/dev/null"))))
                 (if (string-empty-p sha)
                     (user-error
-                     "code-review-minimal: stash push succeeded \
+                     "inline-review: stash push succeeded \
 but could not resolve stash@{0}")
-                  (code-review-minimal--record-stash sha)
-                  (message "code-review-minimal: stashed local changes (%s)"
+                  (inline-review--record-stash sha)
+                  (message "inline-review: stashed local changes (%s)"
                            (substring sha 0 (min 8 (length sha))))
                   t))
             (let ((err (with-current-buffer errbuf (buffer-string))))
               (user-error
-               "code-review-minimal: git stash failed%s"
+               "inline-review: git stash failed%s"
                (if (string-empty-p err)
                    ""
                  (format " \u2014 %s" (string-trim err)))))))))))
 
-(defun code-review-minimal--record-stash (sha)
+(defun inline-review--record-stash (sha)
   "Record SHA as the stash commit created for this review session.
 SHA is the full commit hash returned by `git rev-parse stash@{0}' immediately
-after the stash push, and is used by `code-review-minimal--pop-stash' to
+after the stash push, and is used by `inline-review--pop-stash' to
 locate the exact stash entry even if other stashes are pushed in between."
-  (when-let ((root (code-review-minimal--git-root)))
-    (let ((file (expand-file-name "code-review-minimal-stash"
+  (when-let ((root (inline-review--git-root)))
+    (let ((file (expand-file-name "inline-review-stash"
                                   (expand-file-name ".git" root))))
       (write-region sha nil file nil 'silent))))
 
-(defun code-review-minimal--find-stash-ref (sha)
+(defun inline-review--find-stash-ref (sha)
   "Return the stash ref (e.g. \"stash@{2}\") whose commit hash equals SHA.
 Returns nil if no entry in the current stash list matches."
   (let* ((list-buf (generate-new-buffer " *crm-stash-list*"))
@@ -144,14 +144,14 @@ Returns nil if no entry in the current stash list matches."
           ;; Line format: "<full-sha> stash@{N}"
           (cadr (split-string match " " t)))))))
 
-(defun code-review-minimal--pop-stash ()
+(defun inline-review--pop-stash ()
   "Pop the auto-stash if one was recorded for this review session.
-Reads the stash commit SHA saved by `code-review-minimal--record-stash',
+Reads the stash commit SHA saved by `inline-review--record-stash',
 locates that exact entry in the stash list (so intervening stashes pushed
 by the user do not get accidentally applied), and pops it by ref.  If the
 SHA is no longer in the stash list the sentinel is removed with a warning."
-  (when-let ((root (code-review-minimal--git-root)))
-    (let ((file (expand-file-name "code-review-minimal-stash"
+  (when-let ((root (inline-review--git-root)))
+    (let ((file (expand-file-name "inline-review-stash"
                                   (expand-file-name ".git" root))))
       (when (file-exists-p file)
         (let* ((saved-sha (string-trim
@@ -163,14 +163,14 @@ SHA is no longer in the stash list the sentinel is removed with a warning."
               ;; Legacy empty sentinel (pre-SHA scheme): remove and skip.
               (progn
                 (delete-file file)
-                (message "code-review-minimal: legacy stash sentinel \
+                (message "inline-review: legacy stash sentinel \
 (no SHA recorded); skipping restore to avoid popping wrong stash"))
-            (let ((stash-ref (code-review-minimal--find-stash-ref saved-sha)))
+            (let ((stash-ref (inline-review--find-stash-ref saved-sha)))
               (if (null stash-ref)
                   (progn
                     (delete-file file)
                     (message
-                     "code-review-minimal: recorded stash %s not found \
+                     "inline-review: recorded stash %s not found \
 in stash list; skipping restore"
                      (substring saved-sha 0 (min 8 (length saved-sha)))))
                 (let ((errbuf (get-buffer-create " *crm-stash-err*")))
@@ -181,11 +181,11 @@ in stash list; skipping restore"
                         (progn
                           (delete-file file)
                           (message
-                           "code-review-minimal: restored stashed \
+                           "inline-review: restored stashed \
 changes (%s)" stash-ref))
                       (let ((err (with-current-buffer errbuf (buffer-string))))
                         (message
-                         "code-review-minimal: git stash pop %s failed%s"
+                         "inline-review: git stash pop %s failed%s"
                          stash-ref
                          (if (string-empty-p err)
                              ""
@@ -193,12 +193,12 @@ changes (%s)" stash-ref))
 
 ;;;; ─── Remote Sync ────────────────────────────────────────────────────────────
 
-(defun code-review-minimal--pull-current-branch ()
+(defun inline-review--pull-current-branch ()
   "Pull the current branch from its upstream if one is configured.
 Runs `git pull --ff-only'; silently skips when no upstream is set.
 Returns t if a pull was performed, nil otherwise."
   (let* ((default-directory
-          (or (code-review-minimal--git-root) default-directory))
+          (or (inline-review--git-root) default-directory))
          (upstream
           (string-trim
            (shell-command-to-string
@@ -212,12 +212,12 @@ Returns t if a pull was performed, nil otherwise."
           (if (and (integerp rc) (zerop rc))
               (progn
                 (message
-                 "code-review-minimal: pulled latest changes from %s"
+                 "inline-review: pulled latest changes from %s"
                  upstream)
                 t)
             (let ((err (with-current-buffer errbuf (buffer-string))))
               (message
-               "code-review-minimal: git pull --ff-only failed%s \
+               "inline-review: git pull --ff-only failed%s \
 (proceeding with local version)"
                (if (string-empty-p err)
                    ""
@@ -226,22 +226,22 @@ Returns t if a pull was performed, nil otherwise."
 
 ;;;; ─── Reentrancy Guard ───────────────────────────────────────────────────────
 
-(defun code-review-minimal--review-in-progress-p ()
+(defun inline-review--review-in-progress-p ()
   "Return non-nil if a review session is currently active for the current project.
 Checks the current git root only, so reviews in other projects are unaffected.
 Checks for:
-- a fully-prepared review recorded in `code-review-minimal--review-active-cache'
+- a fully-prepared review recorded in `inline-review--review-active-cache'
 - a saved original-branch file (crash-recovery: survives an Emacs restart)"
-  (let ((root (code-review-minimal--git-root)))
+  (let ((root (inline-review--git-root)))
     (or
      ;; Check the in-memory cache keyed by git root (nil when outside a repo).
-     (gethash root code-review-minimal--review-active-cache)
+     (gethash root inline-review--review-active-cache)
      ;; Saved original branch on disk (crash-recovery)
-     (code-review-minimal--load-original-branch))))
+     (inline-review--load-original-branch))))
 
 ;;;; ─── Auto Checkout via Forge Refs ───────────────────────────────────────────
 
-(defconst code-review-minimal--mr-ref-formats
+(defconst inline-review--mr-ref-formats
   '((github   . "pull/%d/head")
     (gitlab   . "merge-requests/%d/head")
     (gongfeng . "merge-requests/%d/head")
@@ -252,25 +252,25 @@ Gongfeng publish `refs/merge-requests/<iid>/head'.  These refs can be
 fetched directly via git, so the source branch can be checked out without
 any extra backend API call.")
 
-(defun code-review-minimal--auto-checkout-source-branch ()
+(defun inline-review--auto-checkout-source-branch ()
   "Fetch and checkout the source branch of the current MR/PR via git refs.
 
 Uses the well-known ref published by the forge for the MR/PR head — see
-`code-review-minimal--mr-ref-formats' — so no backend API call is made.
+`inline-review--mr-ref-formats' — so no backend API call is made.
 The ref is fetched from `origin' into FETCH_HEAD; a local branch named
 `<owner_repo>_<iid>' is then created or reset to that commit and
 checked out.  The current buffer is reverted on success.
 
 Returns t on success, nil on failure or unsupported backend.  Callers
 should fall back to a manual flow when nil is returned."
-  (let* ((backend code-review-minimal--current-backend)
-         (iid code-review-minimal--mr-iid)
-         (fmt (alist-get backend code-review-minimal--mr-ref-formats)))
+  (let* ((backend inline-review--current-backend)
+         (iid inline-review--mr-iid)
+         (fmt (alist-get backend inline-review--mr-ref-formats)))
     (when (and backend iid fmt)
       (let* ((default-directory
-              (or (code-review-minimal--git-root) default-directory))
+              (or (inline-review--git-root) default-directory))
              (ref (format fmt iid))
-             (local (format "%s_%d" (code-review-minimal--owner-repo-string)
+             (local (format "%s_%d" (inline-review--owner-repo-string)
                             iid))
              (errbuf (get-buffer-create " *crm-fetch-err*")))
         (with-current-buffer errbuf (erase-buffer))
@@ -280,7 +280,7 @@ should fall back to a manual flow when nil is returned."
                              "fetch" "origin" ref)))
           (when (and (integerp fetch-rc) (zerop fetch-rc))
             ;; Step 2: stash dirty worktree so checkout cannot fail.
-            (code-review-minimal--stash-worktree)
+            (inline-review--stash-worktree)
             ;; Step 3: create or reset the local branch from FETCH_HEAD
             ;; and check it out.  `-B' is safe even when already on the
             ;; target branch (it updates the branch ref and working tree).
@@ -290,21 +290,21 @@ should fall back to a manual flow when nil is returned."
                                  "checkout" "-B" local "FETCH_HEAD")))
               (when (and (integerp co-rc) (zerop co-rc))
                 (message
-                 "code-review-minimal: checked out source branch %s"
+                 "inline-review: checked out source branch %s"
                  local)
-                (code-review-minimal--pull-current-branch)
+                (inline-review--pull-current-branch)
                 (when (and buffer-file-name
                            (file-readable-p buffer-file-name))
                   (revert-buffer t t))
                 t))))))))
 
-(defun code-review-minimal--checkout-branch-for-review ()
+(defun inline-review--checkout-branch-for-review ()
   "Checkout the source branch for the current MR/PR review.
 
 First saves the current git branch so it can be restored later by
-`code-review-minimal-finish-review'.
+`inline-review-finish-review'.
 
-Then tries `code-review-minimal--auto-checkout-source-branch', which
+Then tries `inline-review--auto-checkout-source-branch', which
 fetches the well-known forge ref and checks it out — no backend API
 call.  On success, no prompt is shown.
 
@@ -315,9 +315,9 @@ is selected and plain checkout fails, a local tracking branch is
 created automatically and named `<owner_repo>_<remote_branch>'.  Reverts
 the current buffer after a successful checkout.  Skips silently when
 the user accepts the empty default."
-  (code-review-minimal--save-original-branch)
-  (unless (code-review-minimal--auto-checkout-source-branch)
-    (let* ((root (or (code-review-minimal--git-root) default-directory))
+  (inline-review--save-original-branch)
+  (unless (inline-review--auto-checkout-source-branch)
+    (let* ((root (or (inline-review--git-root) default-directory))
            (default-directory root)
            (local-branches
             (split-string
@@ -332,16 +332,16 @@ the user accepts the empty default."
            (all-branches
             (delete-dups (append local-branches remote-branches)))
            (branch
-            (if (and (boundp 'code-review-minimal--mr-source-branch)
-                     code-review-minimal--mr-source-branch)
-                code-review-minimal--mr-source-branch
+            (if (and (boundp 'inline-review--mr-source-branch)
+                     inline-review--mr-source-branch)
+                inline-review--mr-source-branch
               (completing-read
                "Checkout branch for review (RET to skip): "
                all-branches
                nil nil nil nil ""))))
       (unless (string-empty-p branch)
         ;; Stash dirty worktree so checkout cannot fail.
-        (code-review-minimal--stash-worktree)
+        (inline-review--stash-worktree)
         ;; Try plain checkout first (handles local branches and already-fetched
         ;; remote-tracking refs like "origin/foo" via DWIM).
         (let* ((errbuf (get-buffer-create " *crm-checkout-err*"))
@@ -367,7 +367,7 @@ the user accepts the empty default."
                    (review-name
                     (when local-name
                       (format "%s_%s"
-                              (code-review-minimal--owner-repo-string)
+                              (inline-review--owner-repo-string)
                               local-name)))
                    (retry-result
                     (when review-name
@@ -388,14 +388,14 @@ the user accepts the empty default."
                        (with-current-buffer errbuf
                          (buffer-string))))
                   (user-error
-                   "code-review-minimal: git checkout %s failed%s"
+                   "inline-review: git checkout %s failed%s"
                    branch
                    (if (string-empty-p err)
                        ""
                      (format " \u2014 %s" (string-trim err)))))))
-            (message "code-review-minimal: checked out branch %s" branch)
+            (message "inline-review: checked out branch %s" branch)
             ;; Pull to sync with remote before rendering overlays.
-            (code-review-minimal--pull-current-branch)
+            (inline-review--pull-current-branch)
             ;; Revert the buffer so its content matches the newly-checked-out
             ;; file; the diff's new-file line numbers reference this version.
             (when (and buffer-file-name
@@ -404,6 +404,6 @@ the user accepts the empty default."
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-branch)
+(provide 'inline-review-branch)
 
-;;; code-review-minimal-branch.el ends here
+;;; inline-review-branch.el ends here

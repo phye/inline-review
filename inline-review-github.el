@@ -1,11 +1,11 @@
-;;; code-review-minimal-github.el --- GitHub backend for code-review-minimal -*- lexical-binding: t; -*-
+;;; inline-review-github.el --- GitHub backend for inline-review -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
 
 ;;; Commentary:
 ;;
-;; GitHub backend for code-review-minimal.
+;; GitHub backend for inline-review.
 ;; Handles PR review-comment fetching, posting, and updating via the
 ;; GitHub REST API v3.
 ;;
@@ -13,13 +13,13 @@
 ;;   Tokens are read exclusively from authinfo/netrc.  Add an entry to
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine api.github.com login ^crm password <token>
-;;   For GitHub Enterprise, use the host from `code-review-minimal-github-api-url'.
+;;   For GitHub Enterprise, use the host from `inline-review-github-api-url'.
 ;;
 ;; HTTP layer: ghub (`ghub-request'), Authorization: Bearer header.
 ;;
 ;; Backend contract:
 ;;   :fetch  (callback)            — calls (callback THREADS) where THREADS is a
-;;                                   list of plists; see `code-review-minimal-register-backend'.
+;;                                   list of plists; see `inline-review-register-backend'.
 ;;   :post   (beg end body on-success) — calls (on-success) on success.
 ;;   :update (note-id body on-success) — calls (on-success) on success.
 ;;   :resolve (ov on-success)          — GitHub has no resolve API; shows a
@@ -28,11 +28,11 @@
 ;;; Code:
 
 (require 'ghub)
-(require 'code-review-minimal-backend)
+(require 'inline-review-backend)
 
 ;;;; ─── GitHub Remote Parsing ─────────────────────────────────────────────────
 
-(defun code-review-minimal--parse-github-repo (remote-url)
+(defun inline-review--parse-github-repo (remote-url)
   "Parse GitHub REMOTE-URL to get (owner . repo)."
   (when remote-url
     (cond
@@ -60,24 +60,24 @@
 
 ;;;; ─── GitHub HTTP Layer ──────────────────────────────────────────────────────
 
-(defun code-review-minimal--github-api-url (&rest path-segments)
+(defun inline-review--github-api-url (&rest path-segments)
   "Build a full GitHub API URL by joining PATH-SEGMENTS onto the base URL."
   (concat
-   code-review-minimal-github-api-url
+   inline-review-github-api-url
    "/"
    (mapconcat #'identity path-segments "/")))
 
-(defun code-review-minimal--github-http-request
+(defun inline-review--github-http-request
     (method url &optional payload callback)
   "Perform async HTTP METHOD request to GitHub URL via ghub.
 PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
-  (code-review-minimal--assert-token 'github)
-  (let* ((token (code-review-minimal--get-token 'github))
+  (inline-review--assert-token 'github)
+  (let* ((token (inline-review--get-token 'github))
          (host
           (replace-regexp-in-string
-           "^https?://" "" code-review-minimal-github-api-url))
+           "^https?://" "" inline-review-github-api-url))
          (resource
-          (substring url (length code-review-minimal-github-api-url)))
+          (substring url (length inline-review-github-api-url)))
          (wrapped-callback
           (when callback
             (lambda (result _headers _status _req)
@@ -90,90 +90,90 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
      :callback wrapped-callback
      :errorback
      (lambda (err _headers _status _req)
-       (message "code-review-minimal[github]: HTTP error for %s: %S"
+       (message "inline-review[github]: HTTP error for %s: %S"
                 url err)))))
 
 ;;;; ─── GitHub Backend Functions ──────────────────────────────────────────────
 
-(defun code-review-minimal--github-ensure-project-info ()
+(defun inline-review--github-ensure-project-info ()
   "Set project info from remote for GitHub backend."
-  (unless (alist-get 'owner code-review-minimal--project-info)
-    (let* ((remote (code-review-minimal--git-remote-url))
-           (parsed (code-review-minimal--parse-github-repo remote)))
+  (unless (alist-get 'owner inline-review--project-info)
+    (let* ((remote (inline-review--git-remote-url))
+           (parsed (inline-review--parse-github-repo remote)))
       (if parsed
           (progn
-            (message "code-review-minimal: detected repo %s/%s"
+            (message "inline-review: detected repo %s/%s"
                      (car parsed)
                      (cdr parsed))
-            (setq code-review-minimal--project-info
+            (setq inline-review--project-info
                   `((owner . ,(car parsed)) (repo . ,(cdr parsed)))))
         (let ((owner (read-string "GitHub owner/organization: "))
               (repo (read-string "GitHub repository name: ")))
-          (setq code-review-minimal--project-info
+          (setq inline-review--project-info
                 `((owner . ,owner) (repo . ,repo))))))))
 
-(defun code-review-minimal--github-resolve-branches (callback)
+(defun inline-review--github-resolve-branches (callback)
   "Fetch PR source and target branch names, then call CALLBACK with them.
 Calls (funcall CALLBACK SOURCE-BRANCH TARGET-BRANCH), both strings or nil.
 Makes a single lightweight GET to the PR endpoint to retrieve head.ref
 and base.ref.  Does not touch buffer-local branch variables — that is
 the caller's responsibility."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid)
          (url
-          (code-review-minimal--github-api-url
+          (inline-review--github-api-url
            "repos" owner repo "pulls" (number-to-string pr-number))))
-    (code-review-minimal--github-http-request
+    (inline-review--github-http-request
      "GET" url nil
      (lambda (pr)
        (funcall callback
                 (and pr (alist-get 'ref (alist-get 'head pr)))
                 (and pr (alist-get 'ref (alist-get 'base pr))))))))
 
-(defun code-review-minimal--github-fetch-comments (callback)
+(defun inline-review--github-fetch-comments (callback)
   "Fetch PR comments and call CALLBACK with a list of thread plists (GitHub)."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching comments for PR #%d ..."
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid))
+    (message "inline-review: fetching comments for PR #%d ..."
              pr-number)
     (let ((url
-           (code-review-minimal--github-api-url
+           (inline-review--github-api-url
             "repos"
             owner
             repo
             "pulls"
             (number-to-string pr-number)
             "comments")))
-      (code-review-minimal--github-http-request
+      (inline-review--github-http-request
        "GET" url
        nil
        (lambda (comments)
          (funcall callback
-                  (code-review-minimal--github-normalize-comments
+                  (inline-review--github-normalize-comments
                    comments)))))))
 
-(defun code-review-minimal--github-fetch-diff (callback)
+(defun inline-review--github-fetch-diff (callback)
   "Fetch PR changed files and call CALLBACK with a list of change plists (GitHub).
 Each plist has :old-path, :new-path, and :patch (unified diff string)."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching diff for PR #%d ..."
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid))
+    (message "inline-review: fetching diff for PR #%d ..."
              pr-number)
     (let ((url
-           (code-review-minimal--github-api-url
+           (inline-review--github-api-url
             "repos"
             owner
             repo
             "pulls"
             (number-to-string pr-number)
             "files")))
-      (code-review-minimal--github-http-request
+      (inline-review--github-http-request
        "GET" url
        nil
        (lambda (files)
@@ -188,7 +188,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                       :patch (alist-get 'patch f)))
                    (or files '()))))))))
 
-(defun code-review-minimal--github-normalize-comments (comments)
+(defun inline-review--github-normalize-comments (comments)
   "Convert GitHub COMMENTS list into the standard thread plist format."
   (mapcar
    (lambda (c)
@@ -215,21 +215,21 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
         :note-id id)))
    (or comments '())))
 
-(defun code-review-minimal--github-post-comment
+(defun inline-review--github-post-comment
     (_beg end body on-success)
   "Post review comment on line at END with BODY (GitHub), then call ON-SUCCESS.
 GitHub requires the PR head commit SHA for review comments."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
-         (rel-path (code-review-minimal--relative-file-path))
-         (line (code-review-minimal--line-number-at end)))
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid)
+         (rel-path (inline-review--relative-file-path))
+         (line (inline-review--line-number-at end)))
     ;; First fetch the PR head commit SHA
     (let ((pr-url
-           (code-review-minimal--github-api-url
+           (inline-review--github-api-url
             "repos" owner repo "pulls" (number-to-string pr-number))))
-      (code-review-minimal--github-http-request
+      (inline-review--github-http-request
        "GET" pr-url
        nil
        (lambda (pr-data)
@@ -237,9 +237,9 @@ GitHub requires the PR head commit SHA for review comments."
                 (alist-get 'sha (alist-get 'head pr-data))))
            (if (not head-sha)
                (message
-                "code-review-minimal: failed to get PR head commit")
+                "inline-review: failed to get PR head commit")
              (let ((url
-                    (code-review-minimal--github-api-url
+                    (inline-review--github-api-url
                      "repos"
                      owner
                      repo
@@ -252,7 +252,7 @@ GitHub requires the PR head commit SHA for review comments."
                       (line . ,line)
                       (side . "RIGHT")
                       (commit_id . ,head-sha))))
-               (code-review-minimal--github-http-request
+               (inline-review--github-http-request
                 "POST"
                 url
                 payload
@@ -261,57 +261,57 @@ GitHub requires the PR head commit SHA for review comments."
                            (alist-get 'id resp))
                       (progn
                         (message
-                         "code-review-minimal: comment posted (id=%s)"
+                         "inline-review: comment posted (id=%s)"
                          (alist-get 'id resp))
                         (funcall on-success))
                     (message
-                     "code-review-minimal: failed to post comment"))))))))))))
+                     "inline-review: failed to post comment"))))))))))))
 
-(defun code-review-minimal--github-update-comment
+(defun inline-review--github-update-comment
     (note-id body on-success)
   "Update NOTE-ID with BODY (GitHub), then call ON-SUCCESS."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
          (url
-          (code-review-minimal--github-api-url
+          (inline-review--github-api-url
            "repos"
            owner
            repo
            "pulls"
            "comments"
            (number-to-string note-id))))
-    (code-review-minimal--github-http-request
+    (inline-review--github-http-request
      "PATCH" url
      `((body . ,body))
      (lambda (resp)
        (if (and resp
                 (alist-get 'id resp))
            (progn
-             (message "code-review-minimal: comment %d updated"
+             (message "inline-review: comment %d updated"
                       note-id)
              (funcall on-success))
-         (message "code-review-minimal: failed to update comment %d"
+         (message "inline-review: failed to update comment %d"
                   note-id))))))
 
-(defun code-review-minimal--github-resolve-comment
+(defun inline-review--github-resolve-comment
     (_note-id _note-body _on-success)
   "No-op resolve for GitHub (NOTE-ID, NOTE-BODY, ON-SUCCESS are unused).
 GitHub's REST API does not expose an endpoint for resolving individual review
 comments; resolution must be performed through the web interface.  This
 function exists only to satisfy the backend contract."
   (message
-   "code-review-minimal: GitHub review comments are resolved via the web interface"))
+   "inline-review: GitHub review comments are resolved via the web interface"))
 
-(defun code-review-minimal--github-reply-comment
+(defun inline-review--github-reply-comment
     (note-id body on-success)
   "Post a reply to the review comment NOTE-ID with BODY (GitHub), then call ON-SUCCESS."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid)
          (url
-          (code-review-minimal--github-api-url
+          (inline-review--github-api-url
            "repos"
            owner
            repo
@@ -320,40 +320,40 @@ function exists only to satisfy the backend contract."
            "comments"
            (number-to-string note-id)
            "replies")))
-    (code-review-minimal--github-http-request
+    (inline-review--github-http-request
      "POST" url
      `((body . ,body))
      (lambda (resp)
        (if (and resp
                 (alist-get 'id resp))
            (progn
-             (message "code-review-minimal: reply posted (id=%s)"
+             (message "inline-review: reply posted (id=%s)"
                       (alist-get 'id resp))
              (funcall on-success))
-         (message "code-review-minimal: failed to post reply"))))))
+         (message "inline-review: failed to post reply"))))))
 
-(defun code-review-minimal--github-delete-comment (note-id on-success)
+(defun inline-review--github-delete-comment (note-id on-success)
   "Delete review comment NOTE-ID (GitHub), then call ON-SUCCESS."
-  (code-review-minimal--github-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
+  (inline-review--github-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
          (url
-          (code-review-minimal--github-api-url
+          (inline-review--github-api-url
            "repos"
            owner
            repo
            "pulls"
            "comments"
            (number-to-string note-id))))
-    (code-review-minimal--github-http-request
+    (inline-review--github-http-request
      "DELETE" url
      nil
      (lambda (_resp)
-       (message "code-review-minimal: comment %d deleted" note-id)
+       (message "inline-review: comment %d deleted" note-id)
        (funcall on-success)))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-github)
+(provide 'inline-review-github)
 
-;;; code-review-minimal-github.el ends here
+;;; inline-review-github.el ends here

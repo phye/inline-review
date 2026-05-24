@@ -1,4 +1,4 @@
-# Makefile for code-review-minimal
+# Makefile for inline-review
 
 EMACS ?= emacs
 
@@ -6,7 +6,7 @@ EMACS ?= emacs
 
 test:
 	$(EMACS) -batch --eval "(add-to-list 'load-path \".\")" \
-		-l ert -l test/code-review-minimal-test.el \
+		-l ert -l test/inline-review-test.el \
 		-f ert-run-tests-batch-and-exit
 
 clean:

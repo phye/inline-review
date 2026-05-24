@@ -1,4 +1,4 @@
-;;; code-review-minimal-comment.el --- Comment overlays, input, and commands -*- lexical-binding: t; -*-
+;;; inline-review-comment.el --- Comment overlays, input, and commands -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
@@ -6,81 +6,81 @@
 ;;; Commentary:
 ;;
 ;; Comment overlay rendering, input overlay, overlay navigation helpers,
-;; comment CRUD dispatch, and public comment commands for code-review-minimal.
+;; comment CRUD dispatch, and public comment commands for inline-review.
 ;;
 ;; Public API:
 ;;   Buffer-local state:
-;;     `code-review-minimal--overlays'
-;;     `code-review-minimal--input-overlay'
-;;     `code-review-minimal--input-prompt-end'
+;;     `inline-review--overlays'
+;;     `inline-review--input-overlay'
+;;     `inline-review--input-prompt-end'
 ;;   Overlay management:
-;;     `code-review-minimal--clear-overlays'
-;;     `code-review-minimal--insert-discussion-overlay'
+;;     `inline-review--clear-overlays'
+;;     `inline-review--insert-discussion-overlay'
 ;;   Input overlay:
-;;     `code-review-minimal--open-input-overlay'
-;;     `code-review-minimal--close-input-overlay'
-;;     `code-review-minimal--cancel-comment'
-;;     `code-review-minimal--submit-comment'
-;;     `code-review-minimal-input-mode'
+;;     `inline-review--open-input-overlay'
+;;     `inline-review--close-input-overlay'
+;;     `inline-review--cancel-comment'
+;;     `inline-review--submit-comment'
+;;     `inline-review-input-mode'
 ;;   Navigation:
-;;     `code-review-minimal--overlay-at-point'
-;;     `code-review-minimal--sorted-overlay-positions'
+;;     `inline-review--overlay-at-point'
+;;     `inline-review--sorted-overlay-positions'
 ;;   Thread rendering:
-;;     `code-review-minimal--render-comment-threads'
+;;     `inline-review--render-comment-threads'
 ;;   Public commands:
-;;     `code-review-minimal-add-comment'
-;;     `code-review-minimal-edit-comment'
-;;     `code-review-minimal-resolve-comment'
-;;     `code-review-minimal-reply-comment'
-;;     `code-review-minimal-delete-comment'
-;;     `code-review-minimal-next-thread'
-;;     `code-review-minimal-previous-thread'
-;;     `code-review-minimal-toggle-hide-resolved'
+;;     `inline-review-add-comment'
+;;     `inline-review-edit-comment'
+;;     `inline-review-resolve-comment'
+;;     `inline-review-reply-comment'
+;;     `inline-review-delete-comment'
+;;     `inline-review-next-thread'
+;;     `inline-review-previous-thread'
+;;     `inline-review-toggle-hide-resolved'
 ;;   Backend dispatch:
-;;     `code-review-minimal--post-comment'
-;;     `code-review-minimal--update-comment'
-;;     `code-review-minimal--resolve-comment'
-;;     `code-review-minimal--reply-comment'
-;;     `code-review-minimal--delete-comment'
+;;     `inline-review--post-comment'
+;;     `inline-review--update-comment'
+;;     `inline-review--resolve-comment'
+;;     `inline-review--reply-comment'
+;;     `inline-review--delete-comment'
 ;;
-;; Faces are defined in code-review-minimal-custom.el.
+;; Faces are defined in inline-review-custom.el.
 
 ;;; Code:
 
 (require 'cl-lib)
-(require 'code-review-minimal-custom)
-(require 'code-review-minimal-backend)
-(require 'code-review-minimal-branch)
+(require 'inline-review-custom)
+(require 'inline-review-backend)
+(require 'inline-review-branch)
 
 ;; Forward declarations — authoritative definitions are in sibling files.
-(declare-function code-review-minimal--refresh-overlays
-                  "code-review-minimal")
-(declare-function code-review-minimal--goto-hunk
-                  "code-review-minimal-diff")
-(declare-function code-review-minimal-mode
-                  "code-review-minimal")
+(declare-function inline-review--refresh-overlays
+                  "inline-review")
+(declare-function inline-review--goto-hunk
+                  "inline-review-diff")
+(declare-function inline-review-mode
+                  "inline-review")
 
 ;;;; ─── Buffer-local State ─────────────────────────────────────────────────────
 
-(defvar-local code-review-minimal--overlays nil
-  "List of comment overlays created by `code-review-minimal-mode'.")
+(defvar-local inline-review--overlays nil
+  "List of comment overlays created by `inline-review-mode'.")
 
-(defvar-local code-review-minimal--input-overlay nil
+(defvar-local inline-review--input-overlay nil
   "The currently active comment-input overlay, if any.")
 
-(defvar-local code-review-minimal--input-prompt-end nil
+(defvar-local inline-review--input-prompt-end nil
   "Marker pointing to the end of the prompt in the input buffer.")
 
 ;;;; ─── Overlay Management ─────────────────────────────────────────────────────
 
-(defun code-review-minimal--clear-overlays ()
+(defun inline-review--clear-overlays ()
   "Remove all comment overlays."
-  (mapc #'delete-overlay code-review-minimal--overlays)
-  (setq code-review-minimal--overlays nil))
+  (mapc #'delete-overlay inline-review--overlays)
+  (setq inline-review--overlays nil))
 
 ;;;; ─── Overlay Rendering ─────────────────────────────────────────────────────
 
-(defun code-review-minimal--render-note
+(defun inline-review--render-note
     (note &optional is-first resolved outdated)
   "Render NOTE alist into propertized string."
   (let* ((author-obj (alist-get 'author note))
@@ -100,15 +100,15 @@
            (outdated
             (propertize " ⚠outdated"
                         'face
-                        'code-review-minimal-outdated-face))
+                        'inline-review-outdated-face))
            (is-resolved
             (propertize " ✓resolved"
                         'face
-                        'code-review-minimal-resolved-face))
+                        'inline-review-resolved-face))
            ((eq resolved :json-false)
             (propertize " ○open"
                         'face
-                        'code-review-minimal-unresolved-face))
+                        'inline-review-unresolved-face))
            (t
             "")))
          (header
@@ -118,12 +118,12 @@
                                (if created-at
                                    (format "  [%s]" created-at)
                                  ""))
-                       'face 'code-review-minimal-header-face)
+                       'face 'inline-review-header-face)
            status-str))
          (body-face
           (if is-resolved
-              'code-review-minimal-resolved-body-face
-            'code-review-minimal-comment-face))
+              'inline-review-resolved-body-face
+            'inline-review-comment-face))
          (body-lines
           (mapconcat
            (lambda (l) (concat "  │ " l)) (split-string body "\n")
@@ -131,7 +131,7 @@
     (concat
      header "\n" (propertize body-lines 'face body-face) "\n")))
 
-(defun code-review-minimal--insert-discussion-overlay
+(defun inline-review--insert-discussion-overlay
     (line notes resolved first-note-id &optional outdated)
   "Insert a comment-thread overlay anchored after LINE.
 LINE is the 1-based line number in the current buffer at which to anchor
@@ -142,20 +142,20 @@ overlay so that replies and edits can target the correct thread.
 OUTDATED is non-nil when the comment's original line no longer exists
 in the current diff."
   (unless line
-    (cl-return-from code-review-minimal--insert-discussion-overlay))
-  (let* ((pos (code-review-minimal--line-end-pos line))
+    (cl-return-from inline-review--insert-discussion-overlay))
+  (let* ((pos (inline-review--line-end-pos line))
          (ov (make-overlay pos pos nil t nil))
          (first-body (alist-get 'body (car notes)))
          (separator
           (propertize "  ├────────────────\n"
                       'face
-                      'code-review-minimal-header-face))
+                      'inline-review-header-face))
          (text
           (propertize (concat
                        "\n"
                        (mapconcat
                         (lambda (note-and-idx)
-                          (code-review-minimal--render-note
+                          (inline-review--render-note
                            (car note-and-idx)
                            (= (cdr note-and-idx) 0) resolved outdated))
                         (cl-loop
@@ -172,37 +172,37 @@ in the current diff."
                         separator))
                       'cursor 0)))
     (overlay-put ov 'after-string text)
-    (overlay-put ov 'code-review-minimal t)
-    (overlay-put ov 'code-review-minimal-note-id first-note-id)
-    (overlay-put ov 'code-review-minimal-body first-body)
-    (overlay-put ov 'code-review-minimal-resolved resolved)
+    (overlay-put ov 'inline-review t)
+    (overlay-put ov 'inline-review-note-id first-note-id)
+    (overlay-put ov 'inline-review-body first-body)
+    (overlay-put ov 'inline-review-resolved resolved)
     (overlay-put ov 'priority 10)
-    (push ov code-review-minimal--overlays)))
+    (push ov inline-review--overlays)))
 
 ;;;; ─── Input Overlay ─────────────────────────────────────────────────────────
 
-(defvar code-review-minimal--input-map
+(defvar inline-review--input-map
   (let ((m (make-sparse-keymap)))
     (define-key
-     m (kbd "C-c C-c") #'code-review-minimal--submit-comment)
+     m (kbd "C-c C-c") #'inline-review--submit-comment)
     (define-key
-     m (kbd "C-c C-k") #'code-review-minimal--cancel-comment)
+     m (kbd "C-c C-k") #'inline-review--cancel-comment)
     m)
   "Keymap for comment input.")
 
-(defun code-review-minimal--open-input-overlay
+(defun inline-review--open-input-overlay
     (beg end &optional edit-note-id initial-body reply-note-id)
   "Open inline input overlay below region BEG..END.
 If EDIT-NOTE-ID is non-nil, edit existing note with INITIAL-BODY.
 If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
-  (when code-review-minimal--input-overlay
-    (code-review-minimal--close-input-overlay))
+  (when inline-review--input-overlay
+    (inline-review--close-input-overlay))
   (let* ((end-pos
           (save-excursion
             (goto-char end)
             (line-end-position)))
          (ov (make-overlay end-pos end-pos nil t nil))
-         (ibuf (generate-new-buffer "*code-review-minimal-input*"))
+         (ibuf (generate-new-buffer "*inline-review-input*"))
          (editing edit-note-id)
          (replying reply-note-id)
          (prompt
@@ -219,26 +219,26 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
                                    '(:weight normal :slant italic))
                        "\n  │ ")
                       'face
-                      'code-review-minimal-input-face
+                      'inline-review-input-face
                       'read-only
                       t
                       'rear-nonsticky
                       t)))
-    (overlay-put ov 'code-review-minimal-input t)
-    (overlay-put ov 'code-review-minimal-region-beg beg)
-    (overlay-put ov 'code-review-minimal-region-end end)
-    (overlay-put ov 'code-review-minimal-input-buffer ibuf)
+    (overlay-put ov 'inline-review-input t)
+    (overlay-put ov 'inline-review-region-beg beg)
+    (overlay-put ov 'inline-review-region-end end)
+    (overlay-put ov 'inline-review-input-buffer ibuf)
     (when editing
-      (overlay-put ov 'code-review-minimal-edit-note-id edit-note-id))
+      (overlay-put ov 'inline-review-edit-note-id edit-note-id))
     (when replying
       (overlay-put
-       ov 'code-review-minimal-reply-note-id reply-note-id))
-    (setq code-review-minimal--input-overlay ov)
+       ov 'inline-review-reply-note-id reply-note-id))
+    (setq inline-review--input-overlay ov)
     (with-current-buffer ibuf
-      (code-review-minimal-input-mode)
+      (inline-review-input-mode)
       (insert prompt)
-      (setq-local code-review-minimal--input-overlay ov)
-      (setq-local code-review-minimal--input-prompt-end
+      (setq-local inline-review--input-overlay ov)
+      (setq-local inline-review--input-prompt-end
                   (point-marker))
       (when (and editing initial-body)
         (insert initial-body)))
@@ -252,112 +252,112 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
      "Type your comment, then C-c C-c to submit or C-c C-k to cancel.")))
 
 (define-derived-mode
- code-review-minimal-input-mode
+ inline-review-input-mode
  text-mode
- "CR-Input"
+ "IR-Input"
  "Transient mode for entering a code review comment."
  (set-buffer-file-coding-system 'utf-8)
- (use-local-map code-review-minimal--input-map)
+ (use-local-map inline-review--input-map)
  (when (fboundp 'evil-emacs-state)
    (evil-emacs-state)))
 
-(defun code-review-minimal--get-input-text ()
+(defun inline-review--get-input-text ()
   "Extract user text from input buffer."
-  (when code-review-minimal--input-overlay
+  (when inline-review--input-overlay
     (let ((ibuf
            (overlay-get
-            code-review-minimal--input-overlay
-            'code-review-minimal-input-buffer)))
+            inline-review--input-overlay
+            'inline-review-input-buffer)))
       (when (buffer-live-p ibuf)
         (with-current-buffer ibuf
           (string-trim
            (buffer-substring-no-properties
-            code-review-minimal--input-prompt-end (point-max))))))))
+            inline-review--input-prompt-end (point-max))))))))
 
-(defun code-review-minimal--close-input-overlay ()
+(defun inline-review--close-input-overlay ()
   "Close input overlay and clean up."
-  (when code-review-minimal--input-overlay
-    (let* ((ov code-review-minimal--input-overlay)
-           (ibuf (overlay-get ov 'code-review-minimal-input-buffer))
+  (when inline-review--input-overlay
+    (let* ((ov inline-review--input-overlay)
+           (ibuf (overlay-get ov 'inline-review-input-buffer))
            (src-buf (overlay-buffer ov)))
       (delete-overlay ov)
-      (setq code-review-minimal--input-overlay nil)
+      (setq inline-review--input-overlay nil)
       (when (and src-buf (buffer-live-p src-buf))
         (with-current-buffer src-buf
-          (setq code-review-minimal--input-overlay nil)))
+          (setq inline-review--input-overlay nil)))
       (when (buffer-live-p ibuf)
         (let ((win (get-buffer-window ibuf)))
           (when win
             (delete-window win)))
         (kill-buffer ibuf)))))
 
-(defun code-review-minimal--cancel-comment ()
+(defun inline-review--cancel-comment ()
   "Cancel comment input."
   (interactive)
-  (code-review-minimal--close-input-overlay)
-  (message "code-review-minimal: comment cancelled."))
+  (inline-review--close-input-overlay)
+  (message "inline-review: comment cancelled."))
 
-(defun code-review-minimal--submit-comment ()
+(defun inline-review--submit-comment ()
   "Submit comment to API."
   (interactive)
-  (let ((body (code-review-minimal--get-input-text)))
+  (let ((body (inline-review--get-input-text)))
     (if (or (null body) (string-empty-p body))
         (message
-         "code-review-minimal: empty comment, not submitting.")
-      (let* ((ov code-review-minimal--input-overlay)
+         "inline-review: empty comment, not submitting.")
+      (let* ((ov inline-review--input-overlay)
              (src-buf (overlay-buffer ov))
-             (beg (overlay-get ov 'code-review-minimal-region-beg))
-             (end (overlay-get ov 'code-review-minimal-region-end))
+             (beg (overlay-get ov 'inline-review-region-beg))
+             (end (overlay-get ov 'inline-review-region-end))
              (edit-note-id
-              (overlay-get ov 'code-review-minimal-edit-note-id)))
+              (overlay-get ov 'inline-review-edit-note-id)))
         (with-current-buffer src-buf
           (let ((reply-note-id
-                 (overlay-get ov 'code-review-minimal-reply-note-id)))
+                 (overlay-get ov 'inline-review-reply-note-id)))
             (cond
              (edit-note-id
-              (code-review-minimal--update-comment edit-note-id body))
+              (inline-review--update-comment edit-note-id body))
              (reply-note-id
-              (code-review-minimal--reply-comment reply-note-id body))
+              (inline-review--reply-comment reply-note-id body))
              (t
-              (code-review-minimal--post-comment beg end body))))
+              (inline-review--post-comment beg end body))))
           (deactivate-mark)))))
-  (code-review-minimal--close-input-overlay))
+  (inline-review--close-input-overlay))
 
 ;;;; ─── Navigation Helpers ─────────────────────────────────────────────────────
 
-(defun code-review-minimal--overlay-at-point ()
+(defun inline-review--overlay-at-point ()
   "Return comment overlay at point."
   (let ((found nil))
     (dolist (ov
              (overlays-in
               (line-beginning-position) (1+ (line-end-position))))
-      (when (and (overlay-get ov 'code-review-minimal)
-                 (overlay-get ov 'code-review-minimal-note-id))
+      (when (and (overlay-get ov 'inline-review)
+                 (overlay-get ov 'inline-review-note-id))
         (setq found ov)))
     found))
 
-(defun code-review-minimal--sorted-overlay-positions ()
+(defun inline-review--sorted-overlay-positions ()
   "Return list of overlay start positions sorted ascending."
-  (sort (mapcar #'overlay-start code-review-minimal--overlays) #'<))
+  (sort (mapcar #'overlay-start inline-review--overlays) #'<))
 
 ;;;; ─── Thread Rendering ───────────────────────────────────────────────────────
 
-(defun code-review-minimal--render-comment-threads
+(defun inline-review--render-comment-threads
     (buf rel-path threads)
   "Render comment overlay threads in BUF for REL-PATH from THREADS list."
   (with-current-buffer buf
-    (code-review-minimal--clear-overlays)
+    (inline-review--clear-overlays)
     (if (null threads)
-        (message "code-review-minimal: no comments found")
+        (message "inline-review: no comments found")
       (let ((count 0))
         (dolist (th threads)
           (when (and rel-path
                      (string= (plist-get th :path) rel-path)
                      (plist-get th :line)
                      (not
-                      (and code-review-minimal-hide-resolved
+                      (and inline-review-hide-resolved
                            (eq (plist-get th :resolved) t))))
-            (code-review-minimal--insert-discussion-overlay
+            (inline-review--insert-discussion-overlay
              (plist-get th :line)
              (plist-get th :thread)
              (plist-get th :resolved)
@@ -365,32 +365,32 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
              (plist-get th :outdated))
             (cl-incf count)))
         (message
-         "code-review-minimal: %d thread(s) in this file, %d total."
+         "inline-review: %d thread(s) in this file, %d total."
          count (length threads))))))
 
 ;;;; ─── Thread Navigation Helpers ──────────────────────────────────────────────
 
-(defun code-review-minimal--all-thread-positions ()
+(defun inline-review--all-thread-positions ()
   "Return a sorted list of (ABS-PATH . LINE) for every comment thread overlay
 in the current project (git root).
-Scans all live buffers with `code-review-minimal-mode' active whose
+Scans all live buffers with `inline-review-mode' active whose
 `buffer-file-name' is under the current git root, so thread navigation
 never crosses project boundaries.
 Returns nil when no comment overlays are found."
   (let ((result nil)
-        (root (code-review-minimal--git-root)))
+        (root (inline-review--git-root)))
     (dolist (buf (buffer-list))
       (with-current-buffer buf
-        (when (and (bound-and-true-p code-review-minimal-mode)
-                   code-review-minimal--overlays
+        (when (and (bound-and-true-p inline-review-mode)
+                   inline-review--overlays
                    buffer-file-name
                    ;; Only include buffers that belong to the current project.
                    (or (null root)
                        (string-prefix-p root
                                         (expand-file-name buffer-file-name))))
-          (dolist (ov code-review-minimal--overlays)
+          (dolist (ov inline-review--overlays)
             (when (and (overlay-buffer ov)
-                       (overlay-get ov 'code-review-minimal))
+                       (overlay-get ov 'inline-review))
               (let* ((pos (overlay-start ov))
                      (line (line-number-at-pos pos))
                      (abs (expand-file-name buffer-file-name)))
@@ -403,7 +403,7 @@ Returns nil when no comment overlays are found."
                  (and (string= (car a) (car b))
                       (< (cdr a) (cdr b)))))))))
 
-(defun code-review-minimal--current-thread-key ()
+(defun inline-review--current-thread-key ()
   "Return a (ABS-PATH . LINE) key representing the current position.
 LINE is the current line number; ABS-PATH is the current buffer's absolute path."
   (cons (expand-file-name (or buffer-file-name default-directory))
@@ -411,7 +411,7 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
 
 ;;;; ─── Position Helpers ───────────────────────────────────────────────────────
 
-(defun code-review-minimal--line-end-pos (line)
+(defun inline-review--line-end-pos (line)
   "Return buffer position at end of LINE (1-based)."
   (save-excursion
     (goto-char (point-min))
@@ -421,109 +421,109 @@ LINE is the current line number; ABS-PATH is the current buffer's absolute path.
 ;;;; ─── Public Commands ────────────────────────────────────────────────────────
 
 ;;;###autoload
-(defun code-review-minimal-add-comment (beg end)
+(defun inline-review-add-comment (beg end)
   "Add a code review comment for selected region BEG..END."
   (interactive "r")
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (bound-and-true-p inline-review-mode)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (unless code-review-minimal--mr-iid
-    (user-error "code-review-minimal: no MR IID set"))
-  (code-review-minimal--assert-token
-   code-review-minimal--current-backend)
-  (code-review-minimal--open-input-overlay beg end))
+     "inline-review: please enable `inline-review-mode' first"))
+  (unless inline-review--mr-iid
+    (user-error "inline-review: no MR IID set"))
+  (inline-review--assert-token
+   inline-review--current-backend)
+  (inline-review--open-input-overlay beg end))
 
 ;;;###autoload
-(defun code-review-minimal-edit-comment ()
+(defun inline-review-edit-comment ()
   "Edit the code review comment at point."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (bound-and-true-p inline-review-mode)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (let ((ov (code-review-minimal--overlay-at-point)))
+     "inline-review: please enable `inline-review-mode' first"))
+  (let ((ov (inline-review--overlay-at-point)))
     (unless ov
       (user-error
-       "code-review-minimal: no comment overlay on this line"))
-    (let ((note-id (overlay-get ov 'code-review-minimal-note-id))
-          (note-body (overlay-get ov 'code-review-minimal-body))
+       "inline-review: no comment overlay on this line"))
+    (let ((note-id (overlay-get ov 'inline-review-note-id))
+          (note-body (overlay-get ov 'inline-review-body))
           (line (line-beginning-position)))
-      (code-review-minimal--open-input-overlay
+      (inline-review--open-input-overlay
        line line note-id note-body))))
 
 ;;;###autoload
-(defun code-review-minimal-resolve-comment ()
+(defun inline-review-resolve-comment ()
   "Mark the comment at point as resolved."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (bound-and-true-p inline-review-mode)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (let ((ov (code-review-minimal--overlay-at-point)))
+     "inline-review: please enable `inline-review-mode' first"))
+  (let ((ov (inline-review--overlay-at-point)))
     (unless ov
       (user-error
-       "code-review-minimal: no comment overlay on this line"))
-    (let ((already (overlay-get ov 'code-review-minimal-resolved)))
+       "inline-review: no comment overlay on this line"))
+    (let ((already (overlay-get ov 'inline-review-resolved)))
       (when (eq already t)
         (user-error
-         "code-review-minimal: comment is already resolved"))
-      (code-review-minimal--assert-token
-       code-review-minimal--current-backend)
-      (code-review-minimal--resolve-comment ov))))
+         "inline-review: comment is already resolved"))
+      (inline-review--assert-token
+       inline-review--current-backend)
+      (inline-review--resolve-comment ov))))
 
 ;;;###autoload
-(defun code-review-minimal-reply-comment ()
+(defun inline-review-reply-comment ()
   "Reply to the code review comment thread at point."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (bound-and-true-p inline-review-mode)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (let ((ov (code-review-minimal--overlay-at-point)))
+     "inline-review: please enable `inline-review-mode' first"))
+  (let ((ov (inline-review--overlay-at-point)))
     (unless ov
       (user-error
-       "code-review-minimal: no comment overlay on this line"))
-    (code-review-minimal--assert-token
-     code-review-minimal--current-backend)
-    (let ((note-id (overlay-get ov 'code-review-minimal-note-id))
+       "inline-review: no comment overlay on this line"))
+    (inline-review--assert-token
+     inline-review--current-backend)
+    (let ((note-id (overlay-get ov 'inline-review-note-id))
           (line (line-beginning-position)))
-      (code-review-minimal--open-input-overlay
+      (inline-review--open-input-overlay
        line line nil nil note-id))))
 
 ;;;###autoload
-(defun code-review-minimal-delete-comment ()
+(defun inline-review-delete-comment ()
   "Delete the code review comment at point."
   (interactive)
-  (unless (bound-and-true-p code-review-minimal-mode)
+  (unless (bound-and-true-p inline-review-mode)
     (user-error
-     "code-review-minimal: please enable `code-review-minimal-mode' first"))
-  (let ((ov (code-review-minimal--overlay-at-point)))
+     "inline-review: please enable `inline-review-mode' first"))
+  (let ((ov (inline-review--overlay-at-point)))
     (unless ov
       (user-error
-       "code-review-minimal: no comment overlay on this line"))
-    (code-review-minimal--assert-token
-     code-review-minimal--current-backend)
-    (let ((note-id (overlay-get ov 'code-review-minimal-note-id)))
+       "inline-review: no comment overlay on this line"))
+    (inline-review--assert-token
+     inline-review--current-backend)
+    (let ((note-id (overlay-get ov 'inline-review-note-id)))
       (when (yes-or-no-p (format "Delete comment %s? " note-id))
-        (code-review-minimal--delete-comment note-id)))))
+        (inline-review--delete-comment note-id)))))
 
 ;;;###autoload
-(defun code-review-minimal-toggle-hide-resolved ()
+(defun inline-review-toggle-hide-resolved ()
   "Toggle hiding of resolved comment threads and refresh overlays."
   (interactive)
-  (setq code-review-minimal-hide-resolved (not code-review-minimal-hide-resolved))
-  (message "code-review-minimal: %s resolved threads"
-           (if code-review-minimal-hide-resolved "hiding" "showing"))
-  (when (and code-review-minimal-mode code-review-minimal--mr-iid)
-    (code-review-minimal--refresh-overlays)))
+  (setq inline-review-hide-resolved (not inline-review-hide-resolved))
+  (message "inline-review: %s resolved threads"
+           (if inline-review-hide-resolved "hiding" "showing"))
+  (when (and inline-review-mode inline-review--mr-iid)
+    (inline-review--refresh-overlays)))
 
 ;;;###autoload
-(defun code-review-minimal-next-thread ()
+(defun inline-review-next-thread ()
   "Move point to the next comment thread within the current project.
 Stops at the last thread with a message rather than wrapping to the first."
   (interactive)
-  (unless (code-review-minimal--review-in-progress-p)
+  (unless (inline-review--review-in-progress-p)
     (user-error
-     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
-  (let* ((all (code-review-minimal--all-thread-positions))
-         (cur (code-review-minimal--current-thread-key))
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let* ((all (inline-review--all-thread-positions))
+         (cur (inline-review--current-thread-key))
          (next (cl-find-if
                 (lambda (entry)
                   (or (string< (car cur) (car entry))
@@ -531,19 +531,19 @@ Stops at the last thread with a message rather than wrapping to the first."
                            (< (cdr cur) (cdr entry)))))
                 all)))
     (if next
-        (code-review-minimal--goto-hunk (car next) (cdr next))
-      (message "code-review-minimal: no more comment threads in this project"))))
+        (inline-review--goto-hunk (car next) (cdr next))
+      (message "inline-review: no more comment threads in this project"))))
 
 ;;;###autoload
-(defun code-review-minimal-previous-thread ()
+(defun inline-review-previous-thread ()
   "Move point to the previous comment thread within the current project.
 Stops at the first thread with a message rather than wrapping to the last."
   (interactive)
-  (unless (code-review-minimal--review-in-progress-p)
+  (unless (inline-review--review-in-progress-p)
     (user-error
-     "code-review-minimal: no active review for this repository — run `code-review-minimal-review-url' first"))
-  (let* ((all (code-review-minimal--all-thread-positions))
-         (cur (code-review-minimal--current-thread-key))
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let* ((all (inline-review--all-thread-positions))
+         (cur (inline-review--current-thread-key))
          (prev (cl-find-if
                 (lambda (entry)
                   (or (string< (car entry) (car cur))
@@ -551,70 +551,70 @@ Stops at the first thread with a message rather than wrapping to the last."
                            (< (cdr entry) (cdr cur)))))
                 (reverse all))))
     (if prev
-        (code-review-minimal--goto-hunk (car prev) (cdr prev))
-      (message "code-review-minimal: no more comment threads in this project"))))
+        (inline-review--goto-hunk (car prev) (cdr prev))
+      (message "inline-review: no more comment threads in this project"))))
 
 ;;;; ─── Backend Dispatch ───────────────────────────────────────────────────────
 
-(defun code-review-minimal--post-comment (beg end body)
+(defun inline-review--post-comment (beg end body)
   "Post a new comment via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
-    (funcall (code-review-minimal--backend-prop
-              code-review-minimal--current-backend
+    (funcall (inline-review--backend-prop
+              inline-review--current-backend
               :post)
              beg end body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--refresh-overlays))))))
+                 (inline-review--refresh-overlays))))))
 
-(defun code-review-minimal--update-comment (note-id body)
+(defun inline-review--update-comment (note-id body)
   "Update an existing comment via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
-    (funcall (code-review-minimal--backend-prop
-              code-review-minimal--current-backend
+    (funcall (inline-review--backend-prop
+              inline-review--current-backend
               :update)
              note-id body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--refresh-overlays))))))
+                 (inline-review--refresh-overlays))))))
 
-(defun code-review-minimal--resolve-comment (ov)
+(defun inline-review--resolve-comment (ov)
   "Resolve a comment via the current backend, then refresh overlays."
   (let ((buf (current-buffer))
-        (note-id (overlay-get ov 'code-review-minimal-note-id))
-        (note-body (overlay-get ov 'code-review-minimal-body)))
-    (funcall (code-review-minimal--backend-prop
-              code-review-minimal--current-backend
+        (note-id (overlay-get ov 'inline-review-note-id))
+        (note-body (overlay-get ov 'inline-review-body)))
+    (funcall (inline-review--backend-prop
+              inline-review--current-backend
               :resolve)
              note-id note-body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--refresh-overlays))))))
+                 (inline-review--refresh-overlays))))))
 
-(defun code-review-minimal--reply-comment (note-id body)
+(defun inline-review--reply-comment (note-id body)
   "Post a reply to the thread rooted at NOTE-ID via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
-    (funcall (code-review-minimal--backend-prop
-              code-review-minimal--current-backend
+    (funcall (inline-review--backend-prop
+              inline-review--current-backend
               :reply)
              note-id body
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--refresh-overlays))))))
+                 (inline-review--refresh-overlays))))))
 
-(defun code-review-minimal--delete-comment (note-id)
+(defun inline-review--delete-comment (note-id)
   "Delete the comment NOTE-ID via the current backend, then refresh overlays."
   (let ((buf (current-buffer)))
-    (funcall (code-review-minimal--backend-prop
-              code-review-minimal--current-backend
+    (funcall (inline-review--backend-prop
+              inline-review--current-backend
               :delete)
              note-id
              (lambda ()
                (with-current-buffer buf
-                 (code-review-minimal--refresh-overlays))))))
+                 (inline-review--refresh-overlays))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-comment)
+(provide 'inline-review-comment)
 
-;;; code-review-minimal-comment.el ends here
+;;; inline-review-comment.el ends here

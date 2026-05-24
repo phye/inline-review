@@ -1,11 +1,11 @@
-;;; code-review-minimal-gitlab.el --- GitLab backend for code-review-minimal -*- lexical-binding: t; -*-
+;;; inline-review-gitlab.el --- GitLab backend for inline-review -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
 
 ;;; Commentary:
 ;;
-;; GitLab backend for code-review-minimal.
+;; GitLab backend for inline-review.
 ;; Handles MR comment fetching, posting, updating, and resolving via the
 ;; GitLab REST API v4.
 ;;
@@ -13,13 +13,13 @@
 ;;   Tokens are read exclusively from authinfo/netrc.  Add an entry to
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine gitlab.com login ^crm password <token>
-;;   For self-hosted instances, use the host from `code-review-minimal-gitlab-api-url'.
+;;   For self-hosted instances, use the host from `inline-review-gitlab-api-url'.
 ;;
 ;; HTTP layer: ghub (`ghub-request' with :forge 'gitlab), PRIVATE-TOKEN header.
 ;;
 ;; This backend is for standard GitLab instances (API v4) only.  For Gongfeng
 ;; (Tencent's internal GitLab at git.woa.com, which runs a custom API v3
-;; not wire-compatible with v4), see code-review-minimal-gongfeng.el.
+;; not wire-compatible with v4), see inline-review-gongfeng.el.
 ;;
 ;; Backend contract:
 ;;   :fetch  (callback)                — calls (callback THREADS)
@@ -30,11 +30,11 @@
 ;;; Code:
 
 (require 'ghub)
-(require 'code-review-minimal-backend)
+(require 'inline-review-backend)
 
 ;;;; ─── GitLab Remote Parsing ─────────────────────────────────────────────────
 
-(defun code-review-minimal--parse-gitlab-project-path (remote-url)
+(defun inline-review--parse-gitlab-project-path (remote-url)
   "Extract namespace/project from REMOTE-URL (ssh or https)."
   (when remote-url
     (cond
@@ -50,24 +50,24 @@
 
 ;;;; ─── GitLab HTTP Layer ──────────────────────────────────────────────────────
 
-(defun code-review-minimal--gitlab-api-url (&rest path-segments)
+(defun inline-review--gitlab-api-url (&rest path-segments)
   "Build a full GitLab API URL by joining PATH-SEGMENTS onto the base URL."
   (concat
-   code-review-minimal-gitlab-api-url
+   inline-review-gitlab-api-url
    "/"
    (mapconcat #'identity path-segments "/")))
 
-(defun code-review-minimal--gitlab-http-request
+(defun inline-review--gitlab-http-request
     (method url &optional payload callback)
   "Perform async HTTP METHOD request to GitLab URL via ghub.
 PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
-  (code-review-minimal--assert-token 'gitlab)
-  (let* ((token (code-review-minimal--get-token 'gitlab))
+  (inline-review--assert-token 'gitlab)
+  (let* ((token (inline-review--get-token 'gitlab))
          (host
           (replace-regexp-in-string
-           "^https?://" "" code-review-minimal-gitlab-api-url))
+           "^https?://" "" inline-review-gitlab-api-url))
          (resource
-          (substring url (length code-review-minimal-gitlab-api-url)))
+          (substring url (length inline-review-gitlab-api-url)))
          (wrapped-callback
           (when callback
             (lambda (result _headers _status _req)
@@ -81,71 +81,71 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
      :callback wrapped-callback
      :errorback
      (lambda (err _headers _status _req)
-       (message "code-review-minimal[gitlab]: HTTP error for %s: %S"
+       (message "inline-review[gitlab]: HTTP error for %s: %S"
                 url err)))))
 
 ;;;; ─── GitLab Backend Functions ──────────────────────────────────────────────
 
-(defun code-review-minimal--gitlab-resolve-branches (callback)
+(defun inline-review--gitlab-resolve-branches (callback)
   "Fetch MR source and target branch names, then call CALLBACK with them.
 Calls (funcall CALLBACK SOURCE-BRANCH TARGET-BRANCH), both strings or nil.
 Makes the same single lightweight MR-metadata GET used by resolve-mr-id.
 Caches the MR global id as a side-effect so subsequent resolve-mr-id
 calls skip the network round-trip.  Does not touch buffer-local branch
 variables — that is the caller's responsibility."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (iid code-review-minimal--mr-iid)
+  (let* ((project-id (inline-review--gitlab-ensure-project-id))
+         (iid inline-review--mr-iid)
          (url
-          (code-review-minimal--gitlab-api-url
+          (inline-review--gitlab-api-url
            "projects" project-id "merge_request" "iid"
            (number-to-string iid)))
          (buf (current-buffer)))
-    (code-review-minimal--gitlab-http-request
+    (inline-review--gitlab-http-request
      "GET" url nil
      (lambda (mr)
        (let ((mr-id (and mr (alist-get 'id mr))))
          (when (numberp mr-id)
            (with-current-buffer buf
-             (setq code-review-minimal--mr-id mr-id))))
+             (setq inline-review--mr-id mr-id))))
        (funcall callback
                 (and mr (alist-get 'source_branch mr))
                 (and mr (alist-get 'target_branch mr)))))))
 
-(defun code-review-minimal--gitlab-ensure-project-id ()
+(defun inline-review--gitlab-ensure-project-id ()
   "Set project ID from remote for GitLab backend."
-  (unless (alist-get 'project-id code-review-minimal--project-info)
-    (let* ((remote (code-review-minimal--git-remote-url))
+  (unless (alist-get 'project-id inline-review--project-info)
+    (let* ((remote (inline-review--git-remote-url))
            (path
-            (code-review-minimal--parse-gitlab-project-path remote)))
+            (inline-review--parse-gitlab-project-path remote)))
       (if path
           (progn
-            (message "code-review-minimal: detected project %s" path)
-            (setq code-review-minimal--project-info
+            (message "inline-review: detected project %s" path)
+            (setq inline-review--project-info
                   `((project-id . ,(url-hexify-string path)))))
         (let ((manual
                (read-string "Project path (e.g. team/project): ")))
-          (setq code-review-minimal--project-info
+          (setq inline-review--project-info
                 `((project-id . ,(url-hexify-string manual))))))))
-  (alist-get 'project-id code-review-minimal--project-info))
+  (alist-get 'project-id inline-review--project-info))
 
-(defun code-review-minimal--gitlab-resolve-mr-id (callback)
+(defun inline-review--gitlab-resolve-mr-id (callback)
   "Resolve MR global id for the current IID and call CALLBACK with it."
-  (if code-review-minimal--mr-id
-      (funcall callback code-review-minimal--mr-id)
+  (if inline-review--mr-id
+      (funcall callback inline-review--mr-id)
     (let* ((project-id
-            (code-review-minimal--gitlab-ensure-project-id))
-           (iid code-review-minimal--mr-iid)
+            (inline-review--gitlab-ensure-project-id))
+           (iid inline-review--mr-iid)
            (url
-            (code-review-minimal--gitlab-api-url
+            (inline-review--gitlab-api-url
              "projects"
              project-id
              "merge_request"
              "iid"
              (number-to-string iid)))
            (buf (current-buffer)))
-      (message "code-review-minimal: resolving MR id for IID %d ..."
+      (message "inline-review: resolving MR id for IID %d ..."
                iid)
-      (code-review-minimal--gitlab-http-request
+      (inline-review--gitlab-http-request
        "GET" url
        nil
        (lambda (mr)
@@ -154,53 +154,53 @@ variables — that is the caller's responsibility."
            (if (not
                 (numberp mr-id))
                (message
-                "code-review-minimal: failed to resolve MR id")
+                "inline-review: failed to resolve MR id")
              (with-current-buffer buf
-               (setq code-review-minimal--mr-id mr-id))
+               (setq inline-review--mr-id mr-id))
              (funcall callback mr-id))))))))
 
-(defun code-review-minimal--gitlab-fetch-comments (callback)
+(defun inline-review--gitlab-fetch-comments (callback)
   "Fetch MR notes and call CALLBACK with a list of thread plists (GitLab)."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (mr-iid code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching comments for MR !%d ..."
+  (let* ((project-id (inline-review--gitlab-ensure-project-id))
+         (mr-iid inline-review--mr-iid))
+    (message "inline-review: fetching comments for MR !%d ..."
              mr-iid)
-    (code-review-minimal--gitlab-resolve-mr-id
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let ((url
               (concat
-               (code-review-minimal--gitlab-api-url
+               (inline-review--gitlab-api-url
                 "projects"
                 project-id
                 "merge_requests"
                 (number-to-string mr-id)
                 "notes")
                "?per_page=100")))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "GET" url
           nil
           (lambda (notes)
             (funcall callback
-                     (code-review-minimal--gitlab-normalize-notes
+                     (inline-review--gitlab-normalize-notes
                       notes)))))))))
 
-(defun code-review-minimal--gitlab-fetch-diff (callback)
+(defun inline-review--gitlab-fetch-diff (callback)
   "Fetch MR changes and call CALLBACK with a list of change plists (GitLab).
 Each plist has :old-path, :new-path, and :patch (unified diff string)."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (mr-iid code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching diff for MR !%d ..."
+  (let* ((project-id (inline-review--gitlab-ensure-project-id))
+         (mr-iid inline-review--mr-iid))
+    (message "inline-review: fetching diff for MR !%d ..."
              mr-iid)
-    (code-review-minimal--gitlab-resolve-mr-id
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let ((url
-              (code-review-minimal--gitlab-api-url
+              (inline-review--gitlab-api-url
                "projects"
                project-id
                "merge_requests"
                (number-to-string mr-id)
                "changes")))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "GET" url
           nil
           (lambda (resp)
@@ -213,7 +213,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                          :patch (alist-get 'diff c)))
                       (or (alist-get 'changes resp) '()))))))))))
 
-(defun code-review-minimal--gitlab-normalize-notes (notes)
+(defun inline-review--gitlab-normalize-notes (notes)
   "Convert GitLab NOTES list into the standard thread plist format."
   (let ((by-id (make-hash-table))
         (children (make-hash-table))
@@ -269,16 +269,16 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                 result))))
     (nreverse result)))
 
-(defun code-review-minimal--gitlab-post-comment
+(defun inline-review--gitlab-post-comment
     (_beg end body on-success)
   "Post comment on line at END with BODY (GitLab), then call ON-SUCCESS."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id))
-         (rel-path (code-review-minimal--relative-file-path))
-         (end-line (code-review-minimal--line-number-at end)))
-    (code-review-minimal--gitlab-resolve-mr-id
+  (let* ((project-id (inline-review--gitlab-ensure-project-id))
+         (rel-path (inline-review--relative-file-path))
+         (end-line (inline-review--line-number-at end)))
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let* ((url
-               (code-review-minimal--gitlab-api-url
+               (inline-review--gitlab-api-url
                 "projects"
                 project-id
                 "merge_requests"
@@ -289,7 +289,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                  (path . ,rel-path)
                  (line . ,(number-to-string end-line))
                  (line_type . "new"))))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "POST" url
           payload
           (lambda (resp)
@@ -297,20 +297,20 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                      (alist-get 'id resp))
                 (progn
                   (message
-                   "code-review-minimal: comment posted (id=%s)"
+                   "inline-review: comment posted (id=%s)"
                    (alist-get 'id resp))
                   (funcall on-success))
               (message
-               "code-review-minimal: failed to post comment")))))))))
+               "inline-review: failed to post comment")))))))))
 
-(defun code-review-minimal--gitlab-update-comment
+(defun inline-review--gitlab-update-comment
     (note-id body on-success)
   "Update NOTE-ID with BODY (GitLab), then call ON-SUCCESS."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
-    (code-review-minimal--gitlab-resolve-mr-id
+  (let* ((project-id (inline-review--gitlab-ensure-project-id)))
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let* ((url
-               (code-review-minimal--gitlab-api-url
+               (inline-review--gitlab-api-url
                 "projects"
                 project-id
                 "merge_requests"
@@ -318,96 +318,96 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                 "notes"
                 (number-to-string note-id)))
               (payload `((body . ,body))))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "PUT" url
           payload
           (lambda (resp)
             (if (and resp
                      (alist-get 'id resp))
                 (progn
-                  (message "code-review-minimal: note %d updated"
+                  (message "inline-review: note %d updated"
                            note-id)
                   (funcall on-success))
-              (message "code-review-minimal: failed to update note %d"
+              (message "inline-review: failed to update note %d"
                        note-id)))))))))
 
-(defun code-review-minimal--gitlab-resolve-comment
+(defun inline-review--gitlab-resolve-comment
     (note-id note-body on-success)
   "Resolve comment NOTE-ID with NOTE-BODY (GitLab), then call ON-SUCCESS."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
-    (code-review-minimal--gitlab-resolve-mr-id
+  (let* ((project-id (inline-review--gitlab-ensure-project-id)))
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let ((url
-              (code-review-minimal--gitlab-api-url
+              (inline-review--gitlab-api-url
                "projects"
                project-id
                "merge_requests"
                (number-to-string mr-id)
                "notes"
                (number-to-string note-id))))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "PUT" url
           `((body . ,note-body) (resolve_state . 2))
           (lambda (resp)
             (if (and resp
                      (alist-get 'id resp))
                 (progn
-                  (message "code-review-minimal: note %d resolved"
+                  (message "inline-review: note %d resolved"
                            note-id)
                   (funcall on-success))
               (message
-               "code-review-minimal: failed to resolve note %d"
+               "inline-review: failed to resolve note %d"
                note-id)))))))))
 
-(defun code-review-minimal--gitlab-reply-comment
+(defun inline-review--gitlab-reply-comment
     (note-id body on-success)
   "Post a reply to the thread rooted at NOTE-ID with BODY (GitLab), then call ON-SUCCESS."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
-    (code-review-minimal--gitlab-resolve-mr-id
+  (let* ((project-id (inline-review--gitlab-ensure-project-id)))
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let* ((url
-               (code-review-minimal--gitlab-api-url
+               (inline-review--gitlab-api-url
                 "projects"
                 project-id
                 "merge_requests"
                 (number-to-string mr-id)
                 "notes"))
               (payload `((body . ,body) (parent_id . ,note-id))))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "POST" url
           payload
           (lambda (resp)
             (if (and resp
                      (alist-get 'id resp))
                 (progn
-                  (message "code-review-minimal: reply posted (id=%s)"
+                  (message "inline-review: reply posted (id=%s)"
                            (alist-get 'id resp))
                   (funcall on-success))
               (message
-               "code-review-minimal: failed to post reply")))))))))
+               "inline-review: failed to post reply")))))))))
 
-(defun code-review-minimal--gitlab-delete-comment (note-id on-success)
+(defun inline-review--gitlab-delete-comment (note-id on-success)
   "Delete note NOTE-ID (GitLab), then call ON-SUCCESS."
-  (let* ((project-id (code-review-minimal--gitlab-ensure-project-id)))
-    (code-review-minimal--gitlab-resolve-mr-id
+  (let* ((project-id (inline-review--gitlab-ensure-project-id)))
+    (inline-review--gitlab-resolve-mr-id
      (lambda (mr-id)
        (let ((url
-              (code-review-minimal--gitlab-api-url
+              (inline-review--gitlab-api-url
                "projects"
                project-id
                "merge_requests"
                (number-to-string mr-id)
                "notes"
                (number-to-string note-id))))
-         (code-review-minimal--gitlab-http-request
+         (inline-review--gitlab-http-request
           "DELETE" url
           nil
           (lambda (_resp)
-            (message "code-review-minimal: note %d deleted" note-id)
+            (message "inline-review: note %d deleted" note-id)
             (funcall on-success))))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-gitlab)
+(provide 'inline-review-gitlab)
 
-;;; code-review-minimal-gitlab.el ends here
+;;; inline-review-gitlab.el ends here

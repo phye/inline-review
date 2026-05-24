@@ -1,11 +1,11 @@
-;;; code-review-minimal-gongfeng.el --- Gongfeng backend for code-review-minimal -*- lexical-binding: t; -*-
+;;; inline-review-gongfeng.el --- Gongfeng backend for inline-review -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
 
 ;;; Commentary:
 ;;
-;; Gongfeng backend for code-review-minimal.
+;; Gongfeng backend for inline-review.
 ;; Handles MR comment fetching, posting, updating, and resolving against
 ;; Gongfeng (工蜂), Tencent's code hosting platform, accessible at
 ;; git.woa.com (internal) and code.tencent.com (external).
@@ -15,7 +15,7 @@
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine git.woa.com      login ^crm password <token>
 ;;     machine code.tencent.com login ^crm password <token>
-;;   The host is derived from `code-review-minimal-gongfeng-api-url'.
+;;   The host is derived from `inline-review-gongfeng-api-url'.
 ;;
 ;; HTTP layer: Emacs built-in `url-retrieve' with a PRIVATE-TOKEN request
 ;; header.  Gongfeng runs a customised GitLab REST API v3 that is NOT
@@ -23,7 +23,7 @@
 ;; ghub is deliberately avoided here.
 ;;
 ;; API endpoints used (base: https://git.woa.com/api/v3, configurable via
-;; `code-review-minimal-gongfeng-api-url'):
+;; `inline-review-gongfeng-api-url'):
 ;;   Resolve MR id : GET    /projects/:encoded_path/merge_request/iid/:iid → .id
 ;;   List notes    : GET    /projects/:encoded_path/merge_requests/:id/notes
 ;;   Create note   : POST   /projects/:encoded_path/merge_requests/:id/notes
@@ -46,11 +46,11 @@
 (require 'url-http)
 (require 'cl-lib)
 (require 'subr-x)
-(require 'code-review-minimal-backend)
+(require 'inline-review-backend)
 
 ;;;; ─── Gongfeng Remote Parsing ────────────────────────────────────────────────
 
-(defun code-review-minimal--parse-gongfeng-project-path (remote-url)
+(defun inline-review--parse-gongfeng-project-path (remote-url)
   "Extract namespace/project from REMOTE-URL (ssh or https)."
   (when remote-url
     (cond
@@ -66,21 +66,21 @@
 
 ;;;; ─── Gongfeng HTTP Layer (url-retrieve, not ghub) ──────────────────────────
 
-(defun code-review-minimal--gongfeng-api-url (&rest path-segments)
+(defun inline-review--gongfeng-api-url (&rest path-segments)
   "Build a full Gongfeng API URL by joining PATH-SEGMENTS onto the base URL."
   (concat
-   code-review-minimal-gongfeng-api-url
+   inline-review-gongfeng-api-url
    "/"
    (mapconcat #'identity path-segments "/")))
 
-(defun code-review-minimal--gongfeng-http-status ()
+(defun inline-review--gongfeng-http-status ()
   "Return the integer HTTP status from the current url-retrieve buffer."
   (save-excursion
     (goto-char (point-min))
     (when (re-search-forward "HTTP/[0-9.]+ \\([0-9]+\\)" nil t)
       (string-to-number (match-string 1)))))
 
-(defun code-review-minimal--gongfeng-response-body ()
+(defun inline-review--gongfeng-response-body ()
   "Return the response body string from the current url-retrieve buffer."
   (save-excursion
     (goto-char (point-min))
@@ -89,9 +89,9 @@
          (buffer-substring (point) (point-max)) 'utf-8)
       "")))
 
-(defun code-review-minimal--gongfeng-parse-response ()
+(defun inline-review--gongfeng-parse-response ()
   "Parse JSON body from the current url-retrieve buffer."
-  (let ((body (code-review-minimal--gongfeng-response-body)))
+  (let ((body (inline-review--gongfeng-response-body)))
     (condition-case err
         (let ((json-object-type 'alist)
               (json-array-type 'list)
@@ -99,11 +99,11 @@
           (json-read-from-string body))
       (error
        (message
-        "code-review-minimal[gongfeng]: JSON parse error: %S\nbody: %s"
+        "inline-review[gongfeng]: JSON parse error: %S\nbody: %s"
         err body)
        nil))))
 
-(defun code-review-minimal--gongfeng-http-request
+(defun inline-review--gongfeng-http-request
     (method url &optional payload callback)
   "Perform async HTTP METHOD request to Gongfeng URL via url-retrieve.
 PAYLOAD is an alist JSON-encoded as the request body.
@@ -112,7 +112,7 @@ The request is aborted after 30 seconds to prevent Emacs from hanging on a dead 
   (let*
       ((token
         (encode-coding-string
-         (or (code-review-minimal--get-token 'gongfeng) "") 'utf-8))
+         (or (inline-review--get-token 'gongfeng) "") 'utf-8))
        (url-request-method method)
        (url-request-extra-headers
         `(("PRIVATE-TOKEN" . ,token)
@@ -137,18 +137,18 @@ The request is aborted after 30 seconds to prevent Emacs from hanging on a dead 
            (when watchdog-timer
              (cancel-timer watchdog-timer))
            (let* ((http-status
-                   (code-review-minimal--gongfeng-http-status))
+                   (inline-review--gongfeng-http-status))
                   (err (plist-get status :error))
                   (body
-                   (code-review-minimal--gongfeng-response-body)))
+                   (inline-review--gongfeng-response-body)))
              (cond
               (err
                (message
-                "code-review-minimal[gongfeng]: HTTP error %S (URL: %s)\n  body: %s"
+                "inline-review[gongfeng]: HTTP error %S (URL: %s)\n  body: %s"
                 err url (substring body 0 (min 400 (length body)))))
               ((and http-status (>= http-status 400))
                (message
-                "code-review-minimal[gongfeng]: HTTP %d for %s\n  body: %s"
+                "inline-review[gongfeng]: HTTP %d for %s\n  body: %s"
                 http-status
                 url
                 (substring body 0 (min 400 (length body)))))
@@ -156,7 +156,7 @@ The request is aborted after 30 seconds to prevent Emacs from hanging on a dead 
                (when callback
                  (funcall
                   callback
-                  (code-review-minimal--gongfeng-parse-response)))))))
+                  (inline-review--gongfeng-parse-response)))))))
          nil t)))
     ;; Set up a watchdog timer that kills the retrieval buffer if the
     ;; request hasn't completed within the configured timeout.
@@ -168,7 +168,7 @@ The request is aborted after 30 seconds to prevent Emacs from hanging on a dead 
         (lambda ()
           (when (buffer-live-p buf)
             (message
-             "code-review-minimal[gongfeng]: request timed out after %ds — %s"
+             "inline-review[gongfeng]: request timed out after %ds — %s"
              30 url)
             (kill-buffer buf))))))
     ;; Return buf so callers can cancel if needed (normally unused).
@@ -176,62 +176,62 @@ The request is aborted after 30 seconds to prevent Emacs from hanging on a dead 
 
 ;;;; ─── Gongfeng Backend Functions ────────────────────────────────────────────
 
-(defun code-review-minimal--gongfeng-resolve-branches (callback)
+(defun inline-review--gongfeng-resolve-branches (callback)
   "Fetch MR source and target branch names, then call CALLBACK with them.
 Calls (funcall CALLBACK SOURCE-BRANCH TARGET-BRANCH), both strings or nil.
 Makes the same single lightweight MR-metadata GET used by resolve-mr-id.
 Caches the MR global id as a side-effect so subsequent resolve-mr-id
 calls skip the network round-trip.  Does not touch buffer-local branch
 variables — that is the caller's responsibility."
-  (let* ((project-id (code-review-minimal--gongfeng-ensure-project-id))
-         (iid code-review-minimal--mr-iid)
+  (let* ((project-id (inline-review--gongfeng-ensure-project-id))
+         (iid inline-review--mr-iid)
          (url
-          (code-review-minimal--gongfeng-api-url
+          (inline-review--gongfeng-api-url
            "projects" project-id "merge_request" "iid"
            (number-to-string iid)))
          (buf (current-buffer)))
-    (code-review-minimal--gongfeng-http-request
+    (inline-review--gongfeng-http-request
      "GET" url nil
      (lambda (mr)
        (let ((mr-id (and mr (alist-get 'id mr))))
          (when (numberp mr-id)
            (with-current-buffer buf
-             (setq code-review-minimal--mr-id mr-id))))
+             (setq inline-review--mr-id mr-id))))
        (funcall callback
                 (and mr (alist-get 'source_branch mr))
                 (and mr (alist-get 'target_branch mr)))))))
 
-(defun code-review-minimal--gongfeng-ensure-project-id ()
+(defun inline-review--gongfeng-ensure-project-id ()
   "Set project ID from remote for Gongfeng backend."
-  (unless (alist-get 'project-id code-review-minimal--project-info)
-    (let* ((remote (code-review-minimal--git-remote-url))
+  (unless (alist-get 'project-id inline-review--project-info)
+    (let* ((remote (inline-review--git-remote-url))
            (path
-            (code-review-minimal--parse-gongfeng-project-path
+            (inline-review--parse-gongfeng-project-path
              remote)))
       (if path
           (progn
-            (message "code-review-minimal: detected project %s" path)
-            (setq code-review-minimal--project-info
+            (message "inline-review: detected project %s" path)
+            (setq inline-review--project-info
                   `((project-id . ,(url-hexify-string path)))))
         (let ((manual
                (read-string "Project path (e.g. team/project): ")))
-          (setq code-review-minimal--project-info
+          (setq inline-review--project-info
                 `((project-id . ,(url-hexify-string manual))))))))
-  (alist-get 'project-id code-review-minimal--project-info))
+  (alist-get 'project-id inline-review--project-info))
 
-(defun code-review-minimal--gongfeng-resolve-mr-id (callback)
+(defun inline-review--gongfeng-resolve-mr-id (callback)
   "Resolve MR global id for the current IID and call CALLBACK with it."
-  (if code-review-minimal--mr-id
+  (if inline-review--mr-id
       (progn
         (message
          "[crm-gongfeng] resolve-mr-id: reusing cached mr-id=%d"
-         code-review-minimal--mr-id)
-        (funcall callback code-review-minimal--mr-id))
+         inline-review--mr-id)
+        (funcall callback inline-review--mr-id))
     (let* ((project-id
-            (code-review-minimal--gongfeng-ensure-project-id))
-           (iid code-review-minimal--mr-iid)
+            (inline-review--gongfeng-ensure-project-id))
+           (iid inline-review--mr-iid)
            (url
-            (code-review-minimal--gongfeng-api-url
+            (inline-review--gongfeng-api-url
              "projects"
              project-id
              "merge_request"
@@ -241,7 +241,7 @@ variables — that is the caller's responsibility."
       (message "[crm-gongfeng] resolve-mr-id: fetching iid=%d url=%s"
                iid
                url)
-      (code-review-minimal--gongfeng-http-request
+      (inline-review--gongfeng-http-request
        "GET" url
        nil
        (lambda (mr)
@@ -258,54 +258,54 @@ variables — that is the caller's responsibility."
               "[crm-gongfeng] resolve-mr-id: resolved iid=%d → mr-id=%d"
               iid mr-id)
              (with-current-buffer buf
-               (setq code-review-minimal--mr-id mr-id))
+               (setq inline-review--mr-id mr-id))
              (funcall callback mr-id))))))))
 
-(defun code-review-minimal--gongfeng-fetch-comments (callback)
+(defun inline-review--gongfeng-fetch-comments (callback)
   "Fetch MR notes and call CALLBACK with a list of thread plists (Gongfeng)."
   (let* ((project-id
-          (code-review-minimal--gongfeng-ensure-project-id))
-         (mr-iid code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching comments for MR !%d ..."
+          (inline-review--gongfeng-ensure-project-id))
+         (mr-iid inline-review--mr-iid))
+    (message "inline-review: fetching comments for MR !%d ..."
              mr-iid)
-    (code-review-minimal--gongfeng-resolve-mr-id
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let ((url
               (concat
-               (code-review-minimal--gongfeng-api-url
+               (inline-review--gongfeng-api-url
                 "projects"
                 project-id
                 "merge_requests"
                 (number-to-string mr-id)
                 "notes")
                "?per_page=100")))
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "GET" url
           nil
           (lambda (notes)
             (funcall callback
-                     (code-review-minimal--gongfeng-normalize-notes
+                     (inline-review--gongfeng-normalize-notes
                       notes)))))))))
 
-(defun code-review-minimal--gongfeng-fetch-diff (callback)
+(defun inline-review--gongfeng-fetch-diff (callback)
   "Fetch MR changes and call CALLBACK with a list of change plists (Gongfeng).
 Each plist has :old-path, :new-path, and :patch (unified diff string)."
   (let* ((project-id
-          (code-review-minimal--gongfeng-ensure-project-id))
-         (mr-iid code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching diff for MR !%d ..."
+          (inline-review--gongfeng-ensure-project-id))
+         (mr-iid inline-review--mr-iid))
+    (message "inline-review: fetching diff for MR !%d ..."
              mr-iid)
-    (code-review-minimal--gongfeng-resolve-mr-id
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let ((url
-              (code-review-minimal--gongfeng-api-url
+              (inline-review--gongfeng-api-url
                "projects"
                project-id
                "merge_request"
                (number-to-string mr-id)
                "changes")))
          (message "[crm-gongfeng] fetch-diff: GET %s" url)
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "GET" url
           nil
           (lambda (resp)
@@ -322,7 +322,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                       (or (alist-get 'files resp) '()))))))))))
 
 
-(defun code-review-minimal--gongfeng-normalize-notes (notes)
+(defun inline-review--gongfeng-normalize-notes (notes)
   "Convert Gongfeng NOTES list into the standard thread plist format."
   (let ((by-id (make-hash-table))
         (children (make-hash-table))
@@ -378,17 +378,17 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                 result))))
     (nreverse result)))
 
-(defun code-review-minimal--gongfeng-post-comment
+(defun inline-review--gongfeng-post-comment
     (_beg end body on-success)
   "Post comment on line at END with BODY (Gongfeng), then call ON-SUCCESS."
   (let* ((project-id
-          (code-review-minimal--gongfeng-ensure-project-id))
-         (rel-path (code-review-minimal--relative-file-path))
-         (end-line (code-review-minimal--line-number-at end)))
-    (code-review-minimal--gongfeng-resolve-mr-id
+          (inline-review--gongfeng-ensure-project-id))
+         (rel-path (inline-review--relative-file-path))
+         (end-line (inline-review--line-number-at end)))
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let* ((url
-               (code-review-minimal--gongfeng-api-url
+               (inline-review--gongfeng-api-url
                 "projects"
                 project-id
                 "merge_requests"
@@ -399,7 +399,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                  (path . ,rel-path)
                  (line . ,(number-to-string end-line))
                  (line_type . "new"))))
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "POST" url
           payload
           (lambda (resp)
@@ -407,21 +407,21 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                      (alist-get 'id resp))
                 (progn
                   (message
-                   "code-review-minimal: comment posted (id=%s)"
+                   "inline-review: comment posted (id=%s)"
                    (alist-get 'id resp))
                   (funcall on-success))
               (message
-               "code-review-minimal: failed to post comment")))))))))
+               "inline-review: failed to post comment")))))))))
 
-(defun code-review-minimal--gongfeng-update-comment
+(defun inline-review--gongfeng-update-comment
     (note-id body on-success)
   "Update NOTE-ID with BODY (Gongfeng), then call ON-SUCCESS."
   (let* ((project-id
-          (code-review-minimal--gongfeng-ensure-project-id)))
-    (code-review-minimal--gongfeng-resolve-mr-id
+          (inline-review--gongfeng-ensure-project-id)))
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let* ((url
-               (code-review-minimal--gongfeng-api-url
+               (inline-review--gongfeng-api-url
                 "projects"
                 project-id
                 "merge_requests"
@@ -429,49 +429,49 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                 "notes"
                 (number-to-string note-id)))
               (payload `((body . ,body))))
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "PUT" url
           payload
           (lambda (resp)
             (if (and resp
                      (alist-get 'id resp))
                 (progn
-                  (message "code-review-minimal: note %d updated"
+                  (message "inline-review: note %d updated"
                            note-id)
                   (funcall on-success))
-              (message "code-review-minimal: failed to update note %d"
+              (message "inline-review: failed to update note %d"
                        note-id)))))))))
 
-(defun code-review-minimal--gongfeng-resolve-comment
+(defun inline-review--gongfeng-resolve-comment
     (note-id note-body on-success)
   "Resolve comment NOTE-ID with NOTE-BODY (Gongfeng), then call ON-SUCCESS."
   (let ((project-id
-         (code-review-minimal--gongfeng-ensure-project-id)))
-    (code-review-minimal--gongfeng-resolve-mr-id
+         (inline-review--gongfeng-ensure-project-id)))
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let ((url
-              (code-review-minimal--gongfeng-api-url
+              (inline-review--gongfeng-api-url
                "projects"
                project-id
                "merge_requests"
                (number-to-string mr-id)
                "notes"
                (number-to-string note-id))))
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "PUT" url
           `((body . ,note-body) (resolve_state . 2))
           (lambda (resp)
             (if (and resp
                      (alist-get 'id resp))
                 (progn
-                  (message "code-review-minimal: note %d resolved"
+                  (message "inline-review: note %d resolved"
                            note-id)
                   (funcall on-success))
               (message
-               "code-review-minimal: failed to resolve note %d"
+               "inline-review: failed to resolve note %d"
                note-id)))))))))
 
-(defun code-review-minimal--gongfeng-reply-comment
+(defun inline-review--gongfeng-reply-comment
     (note-id body on-success)
   "Post a reply to the root note NOTE-ID with BODY (Gongfeng), then call ON-SUCCESS.
 
@@ -479,11 +479,11 @@ Uses POST /projects/:id/merge_requests/:mr_id/notes/:note_id/replies.
 NOTE-ID must be the root note of a thread; the API does not support
 replying to replies."
   (let ((project-id
-         (code-review-minimal--gongfeng-ensure-project-id)))
-    (code-review-minimal--gongfeng-resolve-mr-id
+         (inline-review--gongfeng-ensure-project-id)))
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let* ((url
-               (code-review-minimal--gongfeng-api-url
+               (inline-review--gongfeng-api-url
                 "projects"
                 project-id
                 "merge_requests"
@@ -493,43 +493,43 @@ replying to replies."
                 "replies"))
               (payload
                `((body . ,body) (notify_enabled . :json-false))))
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "POST" url
           payload
           (lambda (resp)
             (if (and resp
                      (alist-get 'id resp))
                 (progn
-                  (message "code-review-minimal: reply posted (id=%s)"
+                  (message "inline-review: reply posted (id=%s)"
                            (alist-get 'id resp))
                   (funcall on-success))
               (message
-               "code-review-minimal: failed to post reply")))))))))
+               "inline-review: failed to post reply")))))))))
 
-(defun code-review-minimal--gongfeng-delete-comment
+(defun inline-review--gongfeng-delete-comment
     (note-id on-success)
   "Delete note NOTE-ID (Gongfeng), then call ON-SUCCESS."
   (let ((project-id
-         (code-review-minimal--gongfeng-ensure-project-id)))
-    (code-review-minimal--gongfeng-resolve-mr-id
+         (inline-review--gongfeng-ensure-project-id)))
+    (inline-review--gongfeng-resolve-mr-id
      (lambda (mr-id)
        (let ((url
-              (code-review-minimal--gongfeng-api-url
+              (inline-review--gongfeng-api-url
                "projects"
                project-id
                "merge_requests"
                (number-to-string mr-id)
                "notes"
                (number-to-string note-id))))
-         (code-review-minimal--gongfeng-http-request
+         (inline-review--gongfeng-http-request
           "DELETE" url
           nil
           (lambda (_resp)
-            (message "code-review-minimal: note %d deleted" note-id)
+            (message "inline-review: note %d deleted" note-id)
             (funcall on-success))))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-gongfeng)
+(provide 'inline-review-gongfeng)
 
-;;; code-review-minimal-gongfeng.el ends here
+;;; inline-review-gongfeng.el ends here

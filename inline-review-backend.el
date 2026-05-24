@@ -1,4 +1,4 @@
-;;; code-review-minimal-backend.el --- Backend registry, config, auth, and per-repo cache -*- lexical-binding: t; -*-
+;;; inline-review-backend.el --- Backend registry, config, auth, and per-repo cache -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
@@ -6,49 +6,49 @@
 ;;; Commentary:
 ;;
 ;; This file is the shared foundation required by all backend files and by
-;; code-review-minimal.el.  It provides:
+;; inline-review.el.  It provides:
 ;;
-;;   Customization variables — see code-review-minimal-custom.el
-;;   Backend registry (`code-review-minimal-backend-registry',
-;;                     `code-review-minimal-register-backend',
-;;                     `code-review-minimal--backend-prop')
+;;   Customization variables — see inline-review-custom.el
+;;   Backend registry (`inline-review-backend-registry',
+;;                     `inline-review-register-backend',
+;;                     `inline-review--backend-prop')
 ;;   Backend detection & selection
-;;     `code-review-minimal--detect-backend'
-;;     `code-review-minimal--ensure-backend'
+;;     `inline-review--detect-backend'
+;;     `inline-review--ensure-backend'
 ;;   Token management
-;;     `code-review-minimal--git-config'
-;;     `code-review-minimal--authinfo-token'
-;;     `code-review-minimal--backend-host'
-;;     `code-review-minimal--get-token'
-;;     `code-review-minimal--assert-token'
+;;     `inline-review--git-config'
+;;     `inline-review--authinfo-token'
+;;     `inline-review--backend-host'
+;;     `inline-review--get-token'
+;;     `inline-review--assert-token'
 ;;   Remote & URL parsing
-;;     `code-review-minimal--git-remote-url'
-;;     `code-review-minimal--parse-mr-url'
+;;     `inline-review--git-remote-url'
+;;     `inline-review--parse-mr-url'
 ;;   Per-repo cache
-;;     `code-review-minimal--iid-cache'
-;;     `code-review-minimal--backend-cache'
-;;     `code-review-minimal--diff-cache'
-;;     `code-review-minimal--git-root'
-;;     `code-review-minimal--cache-file'
-;;     `code-review-minimal--load-cached-iid' / `--save-iid'
-;;     `code-review-minimal--load-cached-backend' / `--save-backend'
+;;     `inline-review--iid-cache'
+;;     `inline-review--backend-cache'
+;;     `inline-review--diff-cache'
+;;     `inline-review--git-root'
+;;     `inline-review--cache-file'
+;;     `inline-review--load-cached-iid' / `--save-iid'
+;;     `inline-review--load-cached-backend' / `--save-backend'
 ;;   Buffer-local state variables
-;;     `code-review-minimal--mr-iid'
-;;     `code-review-minimal--mr-id'
-;;     `code-review-minimal--mr-source-branch'
-;;     `code-review-minimal--mr-target-branch'
-;;     `code-review-minimal--project-info'
-;;     `code-review-minimal--current-backend'
+;;     `inline-review--mr-iid'
+;;     `inline-review--mr-id'
+;;     `inline-review--mr-source-branch'
+;;     `inline-review--mr-target-branch'
+;;     `inline-review--project-info'
+;;     `inline-review--current-backend'
 ;;   Utility helpers shared with diff and comment layers
-;;     `code-review-minimal--relative-file-path'
-;;     `code-review-minimal--line-number-at'
+;;     `inline-review--relative-file-path'
+;;     `inline-review--line-number-at'
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'subr-x)
 (require 'auth-source)
-(require 'code-review-minimal-custom)
+(require 'inline-review-custom)
 
 ;;;; ─── Backend Registry ───────────────────────────────────────────────────────
 ;;
@@ -92,66 +92,66 @@
 ;;   :reply   Function (note-id body on-success)
 ;;   :delete  Function (note-id on-success)
 
-(defvar code-review-minimal-backend-registry nil
+(defvar inline-review-backend-registry nil
   "Alist mapping backend symbols to their configuration and function table.
-Each entry: (BACKEND-SYMBOL . PLIST).  See `code-review-minimal-register-backend'
+Each entry: (BACKEND-SYMBOL . PLIST).  See `inline-review-register-backend'
 for the list of recognised plist keys.
 
 Note: the value is always reset on package load so that reloading the file
 picks up any additions (e.g. new :fetch-diff handlers).  User-added backends
-via `code-review-minimal-register-backend' belong in init.el, which runs after
+via `inline-review-register-backend' belong in init.el, which runs after
 package load.")
 
 ;; Use setq (not the defvar initialiser) so that every reload refreshes the
 ;; built-in entries.  defvar only runs its initialiser when the variable is
 ;; void, meaning changes to this table would be invisible until Emacs restarts.
-(setq code-review-minimal-backend-registry
+(setq inline-review-backend-registry
       '((gongfeng
-         :api-url-var code-review-minimal-gongfeng-api-url
+         :api-url-var inline-review-gongfeng-api-url
          :remote-re "git\\.woa\\.com\\|code\\.tencent\\.com"
-         :fetch code-review-minimal--gongfeng-fetch-comments
-         :resolve-branches code-review-minimal--gongfeng-resolve-branches
-         :fetch-diff code-review-minimal--gongfeng-fetch-diff
-         :post code-review-minimal--gongfeng-post-comment
-         :update code-review-minimal--gongfeng-update-comment
-         :resolve code-review-minimal--gongfeng-resolve-comment
-         :reply code-review-minimal--gongfeng-reply-comment
-         :delete code-review-minimal--gongfeng-delete-comment)
+         :fetch inline-review--gongfeng-fetch-comments
+         :resolve-branches inline-review--gongfeng-resolve-branches
+         :fetch-diff inline-review--gongfeng-fetch-diff
+         :post inline-review--gongfeng-post-comment
+         :update inline-review--gongfeng-update-comment
+         :resolve inline-review--gongfeng-resolve-comment
+         :reply inline-review--gongfeng-reply-comment
+         :delete inline-review--gongfeng-delete-comment)
         (github
-         :api-url-var code-review-minimal-github-api-url
+         :api-url-var inline-review-github-api-url
          :remote-re "github"
-         :fetch code-review-minimal--github-fetch-comments
-         :resolve-branches code-review-minimal--github-resolve-branches
-         :fetch-diff code-review-minimal--github-fetch-diff
-         :post code-review-minimal--github-post-comment
-         :update code-review-minimal--github-update-comment
-         :resolve code-review-minimal--github-resolve-comment
-         :reply code-review-minimal--github-reply-comment
-         :delete code-review-minimal--github-delete-comment)
+         :fetch inline-review--github-fetch-comments
+         :resolve-branches inline-review--github-resolve-branches
+         :fetch-diff inline-review--github-fetch-diff
+         :post inline-review--github-post-comment
+         :update inline-review--github-update-comment
+         :resolve inline-review--github-resolve-comment
+         :reply inline-review--github-reply-comment
+         :delete inline-review--github-delete-comment)
         (gitlab
-         :api-url-var code-review-minimal-gitlab-api-url
+         :api-url-var inline-review-gitlab-api-url
          :remote-re "gitlab"
-         :fetch code-review-minimal--gitlab-fetch-comments
-         :resolve-branches code-review-minimal--gitlab-resolve-branches
-         :fetch-diff code-review-minimal--gitlab-fetch-diff
-         :post code-review-minimal--gitlab-post-comment
-         :update code-review-minimal--gitlab-update-comment
-         :resolve code-review-minimal--gitlab-resolve-comment
-         :reply code-review-minimal--gitlab-reply-comment
-         :delete code-review-minimal--gitlab-delete-comment)
+         :fetch inline-review--gitlab-fetch-comments
+         :resolve-branches inline-review--gitlab-resolve-branches
+         :fetch-diff inline-review--gitlab-fetch-diff
+         :post inline-review--gitlab-post-comment
+         :update inline-review--gitlab-update-comment
+         :resolve inline-review--gitlab-resolve-comment
+         :reply inline-review--gitlab-reply-comment
+         :delete inline-review--gitlab-delete-comment)
         (codeberg
-         :api-url-var code-review-minimal-codeberg-api-url
+         :api-url-var inline-review-codeberg-api-url
          :remote-re "codeberg"
-         :fetch code-review-minimal--codeberg-fetch-comments
-         :resolve-branches code-review-minimal--codeberg-resolve-branches
-         :fetch-diff code-review-minimal--codeberg-fetch-diff
-         :post code-review-minimal--codeberg-post-comment
-         :update code-review-minimal--codeberg-update-comment
-         :resolve code-review-minimal--codeberg-resolve-comment
-         :reply code-review-minimal--codeberg-reply-comment
-         :delete code-review-minimal--codeberg-delete-comment)))
+         :fetch inline-review--codeberg-fetch-comments
+         :resolve-branches inline-review--codeberg-resolve-branches
+         :fetch-diff inline-review--codeberg-fetch-diff
+         :post inline-review--codeberg-post-comment
+         :update inline-review--codeberg-update-comment
+         :resolve inline-review--codeberg-resolve-comment
+         :reply inline-review--codeberg-reply-comment
+         :delete inline-review--codeberg-delete-comment)))
 
-(defun code-review-minimal-register-backend (backend &rest plist)
+(defun inline-review-register-backend (backend &rest plist)
   "Register BACKEND with its configuration PLIST in the backend registry.
 BACKEND is a symbol (e.g. `myfoo').  PLIST must supply:
 
@@ -169,57 +169,57 @@ BACKEND is a symbol (e.g. `myfoo').  PLIST must supply:
 New entries are prepended so they take precedence over built-in ones for
 :remote-re matching.  If a backend with the same symbol already exists it
 is replaced."
-  (setq code-review-minimal-backend-registry
+  (setq inline-review-backend-registry
         (cons
          (cons backend plist)
          (assq-delete-all
-          backend code-review-minimal-backend-registry))))
+          backend inline-review-backend-registry))))
 
-(defun code-review-minimal--backend-prop (backend prop)
-  "Return PROP for BACKEND from `code-review-minimal-backend-registry'.
+(defun inline-review--backend-prop (backend prop)
+  "Return PROP for BACKEND from `inline-review-backend-registry'.
 Signals an error if BACKEND is not registered."
-  (let ((entry (assq backend code-review-minimal-backend-registry)))
+  (let ((entry (assq backend inline-review-backend-registry)))
     (unless entry
-      (error "code-review-minimal: unknown backend `%s'" backend))
+      (error "inline-review: unknown backend `%s'" backend))
     (plist-get (cdr entry) prop)))
 
 ;;;; ─── Detection & Selection ─────────────────────────────────────────────────
 
-(defun code-review-minimal--detect-backend (remote-url)
+(defun inline-review--detect-backend (remote-url)
   "Auto-detect backend symbol from REMOTE-URL, or nil if unrecognised."
   (car
    (cl-find-if
     (lambda (entry)
       (string-match-p (plist-get (cdr entry) :remote-re) remote-url))
-    code-review-minimal-backend-registry)))
+    inline-review-backend-registry)))
 
-(defun code-review-minimal--ensure-backend ()
+(defun inline-review--ensure-backend ()
   "Determine and return the backend to use.
-Uses `code-review-minimal-backend' if set, otherwise auto-detects from remote URL.
+Uses `inline-review-backend' if set, otherwise auto-detects from remote URL.
 Caches the result per repository."
-  (unless code-review-minimal--current-backend
-    (let ((cached (code-review-minimal--load-cached-backend)))
+  (unless inline-review--current-backend
+    (let ((cached (inline-review--load-cached-backend)))
       (if cached
-          (setq code-review-minimal--current-backend cached)
-        (let* ((remote (code-review-minimal--git-remote-url))
-               (detected (code-review-minimal--detect-backend remote))
-               (backend (or code-review-minimal-backend detected)))
+          (setq inline-review--current-backend cached)
+        (let* ((remote (inline-review--git-remote-url))
+               (detected (inline-review--detect-backend remote))
+               (backend (or inline-review-backend detected)))
           (if backend
               (progn
-                (setq code-review-minimal--current-backend backend)
-                (code-review-minimal--save-backend backend)
+                (setq inline-review--current-backend backend)
+                (inline-review--save-backend backend)
                 (message
-                 "code-review-minimal: auto-detected %s backend from remote"
+                 "inline-review: auto-detected %s backend from remote"
                  backend))
             (user-error
-             "code-review-minimal: Cannot detect backend from remote: %s. \
-Please set `code-review-minimal-backend'"
+             "inline-review: Cannot detect backend from remote: %s. \
+Please set `inline-review-backend'"
              remote))))))
-  code-review-minimal--current-backend)
+  inline-review--current-backend)
 
 ;;;; ─── Token Management ───────────────────────────────────────────────────────
 
-(defun code-review-minimal--git-config (key)
+(defun inline-review--git-config (key)
   "Return the value of git config KEY, or nil if unset."
   (let ((val
          (string-trim
@@ -227,16 +227,16 @@ Please set `code-review-minimal-backend'"
            (format "git config --global %s 2>/dev/null" key)))))
     (and (not (string-empty-p val)) val)))
 
-(defun code-review-minimal--authinfo-token (host backend)
+(defun inline-review--authinfo-token (host backend)
   "Look up a token for HOST in authinfo/netrc via `auth-source'.
 Returns the secret string, or nil if not found.
 
 Searches in order:
-  1. login ^crm                   — dedicated code-review-minimal entry
+  1. login ^crm                   — dedicated inline-review entry
   2. login <git-config-user>^crm  — per-user entry (git config BACKEND.user)
   3. any login on HOST            — fallback"
   (let* ((git-user
-          (code-review-minimal--git-config
+          (inline-review--git-config
            (format "%s.user" (symbol-name backend))))
          (found
           (or (car
@@ -255,30 +255,30 @@ Searches in order:
             (funcall secret)
           secret)))))
 
-(defun code-review-minimal--backend-host (backend)
+(defun inline-review--backend-host (backend)
   "Return the hostname for BACKEND, derived from its base-URL defcustom."
   (replace-regexp-in-string
    "^https?://\\([^/]+\\).*" "\\1"
    (symbol-value
-    (code-review-minimal--backend-prop backend :api-url-var))))
+    (inline-review--backend-prop backend :api-url-var))))
 
-(defun code-review-minimal--get-token (backend)
+(defun inline-review--get-token (backend)
   "Get the authentication token for BACKEND from authinfo/netrc."
-  (code-review-minimal--authinfo-token
-   (code-review-minimal--backend-host backend) backend))
+  (inline-review--authinfo-token
+   (inline-review--backend-host backend) backend))
 
-(defun code-review-minimal--assert-token (backend)
+(defun inline-review--assert-token (backend)
   "Signal an error if no token is found in authinfo for BACKEND."
-  (unless (let ((tok (code-review-minimal--get-token backend)))
+  (unless (let ((tok (inline-review--get-token backend)))
             (and (stringp tok) (not (string-empty-p tok))))
     (user-error
-     "code-review-minimal: No token found for %s.  \
+     "inline-review: No token found for %s.  \
 Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm password <token>"
-     backend (code-review-minimal--backend-host backend))))
+     backend (inline-review--backend-host backend))))
 
 ;;;; ─── Remote & URL Parsing ───────────────────────────────────────────────────
 
-(defun code-review-minimal--git-remote-url ()
+(defun inline-review--git-remote-url ()
   "Return the URL of the `origin' remote."
   (let ((default-directory
          (or (locate-dominating-file
@@ -288,7 +288,7 @@ Add an entry to ~/.authinfo (or ~/.authinfo.gpg), e.g.:\n  machine %s login ^crm
      (shell-command-to-string
       "git remote get-url origin 2>/dev/null"))))
 
-(defun code-review-minimal--parse-mr-url (input)
+(defun inline-review--parse-mr-url (input)
   "Parse a MR/PR URL or bare integer INPUT.
 Returns a plist with :iid and optionally :backend and :project-info, or nil.
 
@@ -326,7 +326,7 @@ Supported URL formats:
         (let* ((host (match-string 1 s))
                (path (match-string 2 s))
                (iid (string-to-number (match-string 3 s)))
-               (backend (code-review-minimal--detect-backend host)))
+               (backend (inline-review--detect-backend host)))
           (list
            :iid iid
            :backend backend
@@ -337,45 +337,45 @@ Supported URL formats:
 
 ;;;; ─── Per-repo Cache ─────────────────────────────────────────────────────────
 
-(defvar code-review-minimal--iid-cache (make-hash-table :test 'equal)
+(defvar inline-review--iid-cache (make-hash-table :test 'equal)
   "In-memory cache mapping git-root (string) → MR IID (integer).")
 
-(defvar code-review-minimal--backend-cache
+(defvar inline-review--backend-cache
   (make-hash-table :test 'equal)
   "In-memory cache mapping git-root (string) → backend symbol.")
 
-(defvar code-review-minimal--diff-cache (make-hash-table :test 'equal)
+(defvar inline-review--diff-cache (make-hash-table :test 'equal)
   "In-memory cache mapping MR key → list of change plists.
-The key is produced by `code-review-minimal--diff-cache-key'.")
+The key is produced by `inline-review--diff-cache-key'.")
 
-(defvar code-review-minimal--review-active-cache
+(defvar inline-review--review-active-cache
   (make-hash-table :test 'equal)
   "In-memory cache mapping git-root (string) → active MR IID (integer).
-Set only after `code-review-minimal-review-url' finishes all preparation
+Set only after `inline-review-review-url' finishes all preparation
 steps (branch checkout + mode activation).  Cleared per-project by
-`code-review-minimal-finish-review'.  Multiple projects may have
+`inline-review-finish-review'.  Multiple projects may have
 simultaneous active entries.")
 
 
-(defun code-review-minimal--git-root ()
+(defun inline-review--git-root ()
   "Return the absolute path to the git root for the current buffer, or nil."
   (when-let ((root
               (locate-dominating-file
                (or buffer-file-name default-directory) ".git")))
     (expand-file-name root)))
 
-(defun code-review-minimal--cache-file (filename)
+(defun inline-review--cache-file (filename)
   "Return the path to a per-repo cache file in .git/ directory."
-  (when-let ((root (code-review-minimal--git-root)))
+  (when-let ((root (inline-review--git-root)))
     (expand-file-name filename (expand-file-name ".git" root))))
 
-(defun code-review-minimal--load-cached-iid ()
+(defun inline-review--load-cached-iid ()
   "Return the persisted MR IID for the current repo, or nil."
-  (let ((root (code-review-minimal--git-root)))
-    (or (and root (gethash root code-review-minimal--iid-cache))
+  (let ((root (inline-review--git-root)))
+    (or (and root (gethash root inline-review--iid-cache))
         (when-let ((file
-                    (code-review-minimal--cache-file
-                     "code-review-minimal-iid")))
+                    (inline-review--cache-file
+                     "inline-review-iid")))
           (when (file-readable-p file)
             (let* ((raw
                     (with-temp-buffer
@@ -384,25 +384,25 @@ simultaneous active entries.")
                    (iid (string-to-number raw)))
               (when (and (integerp iid) (> iid 0))
                 (when root
-                  (puthash root iid code-review-minimal--iid-cache))
+                  (puthash root iid inline-review--iid-cache))
                 iid)))))))
 
-(defun code-review-minimal--save-iid (iid)
+(defun inline-review--save-iid (iid)
   "Persist IID for the current repo."
-  (when-let ((root (code-review-minimal--git-root)))
-    (puthash root iid code-review-minimal--iid-cache))
+  (when-let ((root (inline-review--git-root)))
+    (puthash root iid inline-review--iid-cache))
   (when-let ((file
-              (code-review-minimal--cache-file
-               "code-review-minimal-iid")))
+              (inline-review--cache-file
+               "inline-review-iid")))
     (write-region (number-to-string iid) nil file nil 'silent)))
 
-(defun code-review-minimal--load-cached-backend ()
+(defun inline-review--load-cached-backend ()
   "Return the persisted backend for the current repo, or nil."
-  (let ((root (code-review-minimal--git-root)))
-    (or (and root (gethash root code-review-minimal--backend-cache))
+  (let ((root (inline-review--git-root)))
+    (or (and root (gethash root inline-review--backend-cache))
         (when-let ((file
-                    (code-review-minimal--cache-file
-                     "code-review-minimal-backend")))
+                    (inline-review--cache-file
+                     "inline-review-backend")))
           (when (file-readable-p file)
             (let ((backend
                    (with-temp-buffer
@@ -411,43 +411,43 @@ simultaneous active entries.")
               (when (> (length backend) 0)
                 (when root
                   (puthash
-                   root backend code-review-minimal--backend-cache))
+                   root backend inline-review--backend-cache))
                 (intern backend))))))))
 
-(defun code-review-minimal--save-backend (backend)
+(defun inline-review--save-backend (backend)
   "Persist BACKEND for the current repo."
-  (when-let ((root (code-review-minimal--git-root)))
-    (puthash root backend code-review-minimal--backend-cache))
+  (when-let ((root (inline-review--git-root)))
+    (puthash root backend inline-review--backend-cache))
   (when-let ((file
-              (code-review-minimal--cache-file
-               "code-review-minimal-backend")))
+              (inline-review--cache-file
+               "inline-review-backend")))
     (write-region (symbol-name backend) nil file nil 'silent)))
 
 ;;;; ─── Buffer-local State ─────────────────────────────────────────────────────
 
-(defvar-local code-review-minimal--mr-iid nil
+(defvar-local inline-review--mr-iid nil
   "MR IID (per-project integer id) currently being reviewed.")
 
-(defvar-local code-review-minimal--mr-id nil
-  "MR global integer id resolved from `code-review-minimal--mr-iid'.")
+(defvar-local inline-review--mr-id nil
+  "MR global integer id resolved from `inline-review--mr-iid'.")
 
-(defvar-local code-review-minimal--mr-source-branch nil
+(defvar-local inline-review--mr-source-branch nil
   "Source branch name for the MR currently being reviewed, or nil if unknown.")
 
-(defvar-local code-review-minimal--mr-target-branch nil
+(defvar-local inline-review--mr-target-branch nil
   "Target/base branch name for the MR currently being reviewed, or nil if unknown.")
 
-(defvar-local code-review-minimal--project-info nil
+(defvar-local inline-review--project-info nil
   "Project info alist with backend-specific keys.
 GitHub: ((owner . \"user\") (repo . \"project\"))
 GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 
-(defvar-local code-review-minimal--current-backend nil
+(defvar-local inline-review--current-backend nil
   "The backend symbol currently in use (github, gitlab, gongfeng).")
 
 ;;;; ─── Shared Utility Helpers ─────────────────────────────────────────────────
 
-(defun code-review-minimal--relative-file-path ()
+(defun inline-review--relative-file-path ()
   "Return the path of the current buffer's file relative to git root."
   (when buffer-file-name
     (let* ((root (locate-dominating-file buffer-file-name ".git")))
@@ -456,7 +456,7 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
                               (expand-file-name root))
         (file-name-nondirectory buffer-file-name)))))
 
-(defun code-review-minimal--line-number-at (pos)
+(defun inline-review--line-number-at (pos)
   "Return 1-based line number for POS."
   (save-excursion
     (goto-char pos)
@@ -464,6 +464,6 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-backend)
+(provide 'inline-review-backend)
 
-;;; code-review-minimal-backend.el ends here
+;;; inline-review-backend.el ends here

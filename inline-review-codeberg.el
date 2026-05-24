@@ -1,11 +1,11 @@
-;;; code-review-minimal-codeberg.el --- Codeberg backend for code-review-minimal -*- lexical-binding: t; -*-
+;;; inline-review-codeberg.el --- Codeberg backend for inline-review -*- lexical-binding: t; -*-
 
 ;; Author: phye
 ;; Keywords: tools, vc, review
 
 ;;; Commentary:
 ;;
-;; Codeberg backend for code-review-minimal.
+;; Codeberg backend for inline-review.
 ;; Handles PR comment fetching, posting, updating, and deleting via the
 ;; Gitea REST API v1 (Codeberg runs Forgejo/Gitea).
 ;;
@@ -14,7 +14,7 @@
 ;;   ~/.authinfo (or ~/.authinfo.gpg):
 ;;     machine codeberg.org login ^crm password <token>
 ;;   For self-hosted Gitea instances, use the host from
-;;   `code-review-minimal-codeberg-api-url'.
+;;   `inline-review-codeberg-api-url'.
 ;;
 ;; HTTP layer: Emacs built-in `url-retrieve' with an Authorization: token
 ;; header.  The Gitea API v1 is wire-compatible with GitHub for review
@@ -33,11 +33,11 @@
 (require 'url-http)
 (require 'cl-lib)
 (require 'subr-x)
-(require 'code-review-minimal-backend)
+(require 'inline-review-backend)
 
 ;;;; ─── Codeberg Remote Parsing ────────────────────────────────────────────────
 
-(defun code-review-minimal--parse-codeberg-repo (remote-url)
+(defun inline-review--parse-codeberg-repo (remote-url)
   "Parse Codeberg/Gitea REMOTE-URL to get (owner . repo)."
   (when remote-url
     (cond
@@ -64,21 +64,21 @@
 
 ;;;; ─── Codeberg HTTP Layer ────────────────────────────────────────────────────
 
-(defun code-review-minimal--codeberg-api-url (&rest path-segments)
+(defun inline-review--codeberg-api-url (&rest path-segments)
   "Build a full Codeberg API URL by joining PATH-SEGMENTS onto the base URL."
   (concat
-   code-review-minimal-codeberg-api-url
+   inline-review-codeberg-api-url
    "/"
    (mapconcat #'identity path-segments "/")))
 
-(defun code-review-minimal--codeberg-http-status ()
+(defun inline-review--codeberg-http-status ()
   "Return the integer HTTP status from the current url-retrieve buffer."
   (save-excursion
     (goto-char (point-min))
     (when (re-search-forward "HTTP/[0-9.]+ \\([0-9]+\\)" nil t)
       (string-to-number (match-string 1)))))
 
-(defun code-review-minimal--codeberg-response-body ()
+(defun inline-review--codeberg-response-body ()
   "Return the response body string from the current url-retrieve buffer."
   (save-excursion
     (goto-char (point-min))
@@ -87,9 +87,9 @@
          (buffer-substring (point) (point-max)) 'utf-8)
       "")))
 
-(defun code-review-minimal--codeberg-parse-response ()
+(defun inline-review--codeberg-parse-response ()
   "Parse JSON body from the current url-retrieve buffer."
-  (let ((body (code-review-minimal--codeberg-response-body)))
+  (let ((body (inline-review--codeberg-response-body)))
     (condition-case err
         (let ((json-object-type 'alist)
               (json-array-type 'list)
@@ -97,11 +97,11 @@
           (json-read-from-string body))
       (error
        (message
-        "code-review-minimal[codeberg]: JSON parse error: %S\nbody: %s"
+        "inline-review[codeberg]: JSON parse error: %S\nbody: %s"
         err body)
        nil))))
 
-(defun code-review-minimal--codeberg-http-request
+(defun inline-review--codeberg-http-request
     (method url &optional payload callback)
   "Perform async HTTP METHOD request to Codeberg URL via url-retrieve.
 PAYLOAD is an alist JSON-encoded as the request body.
@@ -109,7 +109,7 @@ CALLBACK receives the parsed JSON response (or nil on error).
 The request is aborted after 30 seconds."
   (let* ((token
           (encode-coding-string
-           (or (code-review-minimal--get-token 'codeberg) "") 'utf-8))
+           (or (inline-review--get-token 'codeberg) "") 'utf-8))
          (url-request-method method)
          (url-request-extra-headers
           `(("Authorization" . ,(concat "token " token))
@@ -128,24 +128,24 @@ The request is aborted after 30 seconds."
              (when watchdog-timer
                (cancel-timer watchdog-timer))
              (let* ((http-status
-                     (code-review-minimal--codeberg-http-status))
+                     (inline-review--codeberg-http-status))
                     (err (plist-get status :error))
-                    (body (code-review-minimal--codeberg-response-body)))
+                    (body (inline-review--codeberg-response-body)))
                (cond
                 (err
                  (message
-                  "code-review-minimal[codeberg]: HTTP error %S (URL: %s)\n  body: %s"
+                  "inline-review[codeberg]: HTTP error %S (URL: %s)\n  body: %s"
                   err url (substring body 0 (min 400 (length body)))))
                 ((and http-status (>= http-status 400))
                  (message
-                  "code-review-minimal[codeberg]: HTTP %d for %s\n  body: %s"
+                  "inline-review[codeberg]: HTTP %d for %s\n  body: %s"
                   http-status url
                   (substring body 0 (min 400 (length body)))))
                 (t
                  (when callback
                    (funcall
                     callback
-                    (code-review-minimal--codeberg-parse-response)))))))
+                    (inline-review--codeberg-parse-response)))))))
            nil t)))
     (when buf
       (setq watchdog-timer
@@ -154,82 +154,82 @@ The request is aborted after 30 seconds."
              (lambda ()
                (when (buffer-live-p buf)
                  (message
-                  "code-review-minimal[codeberg]: request timed out after %ds — %s"
+                  "inline-review[codeberg]: request timed out after %ds — %s"
                   30 url)
                  (kill-buffer buf))))))
     buf))
 
 ;;;; ─── Codeberg Backend Functions ─────────────────────────────────────────────
 
-(defun code-review-minimal--codeberg-ensure-project-info ()
+(defun inline-review--codeberg-ensure-project-info ()
   "Set project info from remote for Codeberg backend."
-  (unless (alist-get 'owner code-review-minimal--project-info)
-    (let* ((remote (code-review-minimal--git-remote-url))
-           (parsed (code-review-minimal--parse-codeberg-repo remote)))
+  (unless (alist-get 'owner inline-review--project-info)
+    (let* ((remote (inline-review--git-remote-url))
+           (parsed (inline-review--parse-codeberg-repo remote)))
       (if parsed
           (progn
-            (message "code-review-minimal: detected repo %s/%s"
+            (message "inline-review: detected repo %s/%s"
                      (car parsed) (cdr parsed))
-            (setq code-review-minimal--project-info
+            (setq inline-review--project-info
                   `((owner . ,(car parsed)) (repo . ,(cdr parsed)))))
         (let ((owner (read-string "Codeberg owner/organization: "))
               (repo (read-string "Codeberg repository name: ")))
-          (setq code-review-minimal--project-info
+          (setq inline-review--project-info
                 `((owner . ,owner) (repo . ,repo))))))))
 
-(defun code-review-minimal--codeberg-resolve-branches (callback)
+(defun inline-review--codeberg-resolve-branches (callback)
   "Fetch PR source and target branch names, then call CALLBACK with them.
 Calls (funcall CALLBACK SOURCE-BRANCH TARGET-BRANCH), both strings or nil.
 Makes a single lightweight GET to the PR endpoint to retrieve head.ref
 and base.ref.  Does not touch buffer-local branch variables — that is
 the caller's responsibility."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid)
          (url
-          (code-review-minimal--codeberg-api-url
+          (inline-review--codeberg-api-url
            "repos" owner repo "pulls" (number-to-string pr-number))))
-    (code-review-minimal--codeberg-http-request
+    (inline-review--codeberg-http-request
      "GET" url nil
      (lambda (pr)
        (funcall callback
                 (and pr (alist-get 'ref (alist-get 'head pr)))
                 (and pr (alist-get 'ref (alist-get 'base pr))))))))
 
-(defun code-review-minimal--codeberg-fetch-comments (callback)
+(defun inline-review--codeberg-fetch-comments (callback)
   "Fetch PR comments and call CALLBACK with a list of thread plists (Codeberg)."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching comments for PR #%d ..."
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid))
+    (message "inline-review: fetching comments for PR #%d ..."
              pr-number)
     (let ((url
-           (code-review-minimal--codeberg-api-url
+           (inline-review--codeberg-api-url
             "repos" owner repo "pulls"
             (number-to-string pr-number) "comments")))
-      (code-review-minimal--codeberg-http-request
+      (inline-review--codeberg-http-request
        "GET" url nil
        (lambda (comments)
          (funcall callback
-                  (code-review-minimal--codeberg-normalize-comments
+                  (inline-review--codeberg-normalize-comments
                    comments)))))))
 
-(defun code-review-minimal--codeberg-fetch-diff (callback)
+(defun inline-review--codeberg-fetch-diff (callback)
   "Fetch PR changed files and call CALLBACK with a list of change plists (Codeberg).
 Each plist has :old-path, :new-path, and :patch (unified diff string)."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid))
-    (message "code-review-minimal: fetching diff for PR #%d ..."
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid))
+    (message "inline-review: fetching diff for PR #%d ..."
              pr-number)
     (let ((url
-           (code-review-minimal--codeberg-api-url
+           (inline-review--codeberg-api-url
             "repos" owner repo "pulls"
             (number-to-string pr-number) "files")))
-      (code-review-minimal--codeberg-http-request
+      (inline-review--codeberg-http-request
        "GET" url nil
        (lambda (files)
          (funcall callback
@@ -243,7 +243,7 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
                       :patch (alist-get 'patch f)))
                    (or files '()))))))))
 
-(defun code-review-minimal--codeberg-normalize-comments (comments)
+(defun inline-review--codeberg-normalize-comments (comments)
   "Convert Codeberg COMMENTS list into the standard thread plist format."
   (mapcar
    (lambda (c)
@@ -268,29 +268,29 @@ Each plist has :old-path, :new-path, and :patch (unified diff string)."
         :note-id id)))
    (or comments '())))
 
-(defun code-review-minimal--codeberg-post-comment
+(defun inline-review--codeberg-post-comment
     (_beg end body on-success)
   "Post review comment on line at END with BODY (Codeberg), then call ON-SUCCESS.
 Codeberg requires the PR head commit SHA for review comments."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
-         (rel-path (code-review-minimal--relative-file-path))
-         (line (code-review-minimal--line-number-at end)))
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid)
+         (rel-path (inline-review--relative-file-path))
+         (line (inline-review--line-number-at end)))
     ;; First fetch the PR head commit SHA
     (let ((pr-url
-           (code-review-minimal--codeberg-api-url
+           (inline-review--codeberg-api-url
             "repos" owner repo "pulls" (number-to-string pr-number))))
-      (code-review-minimal--codeberg-http-request
+      (inline-review--codeberg-http-request
        "GET" pr-url nil
        (lambda (pr-data)
          (let ((head-sha (alist-get 'sha (alist-get 'head pr-data))))
            (if (not head-sha)
                (message
-                "code-review-minimal: failed to get PR head commit")
+                "inline-review: failed to get PR head commit")
              (let ((url
-                    (code-review-minimal--codeberg-api-url
+                    (inline-review--codeberg-api-url
                      "repos" owner repo "pulls"
                      (number-to-string pr-number) "comments"))
                    (payload
@@ -299,88 +299,88 @@ Codeberg requires the PR head commit SHA for review comments."
                       (line . ,line)
                       (side . "RIGHT")
                       (commit_id . ,head-sha))))
-               (code-review-minimal--codeberg-http-request
+               (inline-review--codeberg-http-request
                 "POST" url payload
                 (lambda (resp)
                   (if (and resp (alist-get 'id resp))
                       (progn
                         (message
-                         "code-review-minimal: comment posted (id=%s)"
+                         "inline-review: comment posted (id=%s)"
                          (alist-get 'id resp))
                         (funcall on-success))
                     (message
-                     "code-review-minimal: failed to post comment"))))))))))))
+                     "inline-review: failed to post comment"))))))))))))
 
-(defun code-review-minimal--codeberg-update-comment
+(defun inline-review--codeberg-update-comment
     (note-id body on-success)
   "Update NOTE-ID with BODY (Codeberg), then call ON-SUCCESS."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
          (url
-          (code-review-minimal--codeberg-api-url
+          (inline-review--codeberg-api-url
            "repos" owner repo "pulls" "comments"
            (number-to-string note-id))))
-    (code-review-minimal--codeberg-http-request
+    (inline-review--codeberg-http-request
      "PATCH" url
      `((body . ,body))
      (lambda (resp)
        (if (and resp (alist-get 'id resp))
            (progn
-             (message "code-review-minimal: comment %d updated" note-id)
+             (message "inline-review: comment %d updated" note-id)
              (funcall on-success))
-         (message "code-review-minimal: failed to update comment %d"
+         (message "inline-review: failed to update comment %d"
                   note-id))))))
 
-(defun code-review-minimal--codeberg-resolve-comment
+(defun inline-review--codeberg-resolve-comment
     (_note-id _note-body _on-success)
   "No-op resolve for Codeberg.
 Gitea/Codeberg does not expose an endpoint for resolving individual review
 comments via the REST API.  This function exists only to satisfy the backend
 contract."
   (message
-   "code-review-minimal: Codeberg review comments are resolved via the web interface"))
+   "inline-review: Codeberg review comments are resolved via the web interface"))
 
-(defun code-review-minimal--codeberg-reply-comment
+(defun inline-review--codeberg-reply-comment
     (note-id body on-success)
   "Post a reply to the review comment NOTE-ID with BODY (Codeberg), then call ON-SUCCESS."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
-         (pr-number code-review-minimal--mr-iid)
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
+         (pr-number inline-review--mr-iid)
          (url
-          (code-review-minimal--codeberg-api-url
+          (inline-review--codeberg-api-url
            "repos" owner repo "pulls"
            (number-to-string pr-number) "comments"
            (number-to-string note-id) "replies")))
-    (code-review-minimal--codeberg-http-request
+    (inline-review--codeberg-http-request
      "POST" url
      `((body . ,body))
      (lambda (resp)
        (if (and resp (alist-get 'id resp))
            (progn
-             (message "code-review-minimal: reply posted (id=%s)"
+             (message "inline-review: reply posted (id=%s)"
                       (alist-get 'id resp))
              (funcall on-success))
-         (message "code-review-minimal: failed to post reply"))))))
+         (message "inline-review: failed to post reply"))))))
 
-(defun code-review-minimal--codeberg-delete-comment (note-id on-success)
+(defun inline-review--codeberg-delete-comment (note-id on-success)
   "Delete review comment NOTE-ID (Codeberg), then call ON-SUCCESS."
-  (code-review-minimal--codeberg-ensure-project-info)
-  (let* ((owner (alist-get 'owner code-review-minimal--project-info))
-         (repo (alist-get 'repo code-review-minimal--project-info))
+  (inline-review--codeberg-ensure-project-info)
+  (let* ((owner (alist-get 'owner inline-review--project-info))
+         (repo (alist-get 'repo inline-review--project-info))
          (url
-          (code-review-minimal--codeberg-api-url
+          (inline-review--codeberg-api-url
            "repos" owner repo "pulls" "comments"
            (number-to-string note-id))))
-    (code-review-minimal--codeberg-http-request
+    (inline-review--codeberg-http-request
      "DELETE" url nil
      (lambda (_resp)
-       (message "code-review-minimal: comment %d deleted" note-id)
+       (message "inline-review: comment %d deleted" note-id)
        (funcall on-success)))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
-(provide 'code-review-minimal-codeberg)
+(provide 'inline-review-codeberg)
 
-;;; code-review-minimal-codeberg.el ends here
+;;; inline-review-codeberg.el ends here

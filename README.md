@@ -1,4 +1,4 @@
-# code-review-minimal
+# inline-review
 
 > **Note:** Most of the code in this repository was generated with
 > [Claude Code](https://claude.ai/code).
@@ -25,7 +25,7 @@ git.woa.com / code.tencent.com) MRs.
   
 ## Comparison with other packages
 
-| | [github-review](https://github.com/charignon/github-review) | [code-review](https://github.com/wandersoncferreira/code-review) | code-review-minimal |
+| | [github-review](https://github.com/charignon/github-review) | [code-review](https://github.com/wandersoncferreira/code-review) | inline-review |
 |---|---|---|---|
 | Platforms | GitHub only | GitHub, GitLab, Gitea | GitHub, GitLab, Gongfeng |
 | Local database | None | Required (closql/forge) | **None** — remote API only |
@@ -35,7 +35,7 @@ git.woa.com / code.tencent.com) MRs.
 | Setup | authinfo token | Sync local DB first | Paste a URL and go |
 | Custom backends | No | No | **Yes — register from init, no fork needed** |
 
-**code-review-minimal** is intentionally narrow in scope:
+**inline-review** is intentionally narrow in scope:
 
 - **No local database.** All data is fetched live from the remote API on demand.
   There is nothing to sync, migrate, or corrupt.
@@ -45,9 +45,9 @@ git.woa.com / code.tencent.com) MRs.
   are editing — no context switching to a separate diff view.
 - **One job.** Open a file, paste an MR/PR URL, see comments inline, post
   replies. Nothing more.
-- **Extensible backends.** The backend registry (`code-review-minimal-backend-registry`)
+- **Extensible backends.** The backend registry (`inline-review-backend-registry`)
   is public. Add support for any forge without forking the package — just call
-  `code-review-minimal-register-backend` from your init file.
+  `inline-review-register-backend` from your init file.
 
 If you need a full review workflow — diff views, approvals, PR creation — use
 [github-review](https://github.com/charignon/github-review),
@@ -64,15 +64,15 @@ If you need a full review workflow — diff views, approvals, PR creation — us
 ### Manual
 
 ```elisp
-(add-to-list 'load-path "/path/to/code-review-minimal")
-(require 'code-review-minimal)
+(add-to-list 'load-path "/path/to/inline-review")
+(require 'inline-review)
 ```
 
 ### use-package
 
 ```elisp
-(use-package code-review-minimal
-  :load-path "~/path/to/code-review-minimal")
+(use-package inline-review
+  :load-path "~/path/to/inline-review")
 ```
 
 No token variables to set — see Authentication below.
@@ -138,7 +138,7 @@ The lookup order for each host is:
 
 2. Run:
    ```
-   M-x code-review-minimal-review-url
+   M-x inline-review-review-url
    ```
    Paste the full web URL of the MR/PR, e.g.:
    ```
@@ -151,7 +151,7 @@ The lookup order for each host is:
 
 3. To review the same MR in another file of the same repo, just enable the mode:
    ```
-   M-x code-review-minimal-mode
+   M-x inline-review-mode
    ```
    The cached IID and backend are reused automatically.
 
@@ -159,31 +159,31 @@ The lookup order for each host is:
 
 | Command | Description |
 |---------|-------------|
-| `code-review-minimal-review-url` | **Main entry point.** Start a review from a full MR/PR URL |
-| `code-review-minimal-mode` | Toggle the minor mode (uses cached state if available) |
-| `code-review-minimal-add-comment` | Add a comment on the selected region |
-| `code-review-minimal-edit-comment` | Edit the comment overlay at point |
-| `code-review-minimal-resolve-comment` | Mark the comment at point as resolved |
-| `code-review-minimal-refresh` | Re-fetch and redisplay all comments |
-| `code-review-minimal-set-backend-for-repo` | Override the auto-detected backend for this repo |
+| `inline-review-review-url` | **Main entry point.** Start a review from a full MR/PR URL |
+| `inline-review-mode` | Toggle the minor mode (uses cached state if available) |
+| `inline-review-add-comment` | Add a comment on the selected region |
+| `inline-review-edit-comment` | Edit the comment overlay at point |
+| `inline-review-resolve-comment` | Mark the comment at point as resolved |
+| `inline-review-refresh` | Re-fetch and redisplay all comments |
+| `inline-review-set-backend-for-repo` | Override the auto-detected backend for this repo |
 
 ### Adding a comment
 
 1. Select a region of code.
-2. `M-x code-review-minimal-add-comment`
+2. `M-x inline-review-add-comment`
 3. An input area opens below the selection. Type your comment.
 4. `C-c C-c` to submit, `C-c C-k` to cancel.
 
 ### Editing a comment
 
 1. Move point to a line that has a comment overlay.
-2. `M-x code-review-minimal-edit-comment`
+2. `M-x inline-review-edit-comment`
 3. Edit the text in the input area, then `C-c C-c`.
 
 ### Resolving a comment
 
 1. Move point to a line that has an unresolved comment overlay.
-2. `M-x code-review-minimal-resolve-comment`
+2. `M-x inline-review-resolve-comment`
 
 > **Note:** GitHub does not expose a REST API for resolving review comments.
 > Use the web interface for GitHub repos.
@@ -195,9 +195,9 @@ The lookup order for each host is:
 For GitHub Enterprise or self-hosted GitLab, override the base URL:
 
 ```elisp
-(setq code-review-minimal-github-api-url "https://github.company.com/api/v3")
-(setq code-review-minimal-gitlab-api-url "https://gitlab.company.com/api/v4")
-(setq code-review-minimal-gongfeng-api-url "https://git.company.com/api/v3")
+(setq inline-review-github-api-url "https://github.company.com/api/v3")
+(setq inline-review-gitlab-api-url "https://gitlab.company.com/api/v4")
+(setq inline-review-gongfeng-api-url "https://git.company.com/api/v3")
 ```
 
 ### Force a backend
@@ -206,31 +206,31 @@ Auto-detection reads the git remote URL. To override for a specific repo, add a
 `.dir-locals.el` at the root:
 
 ```elisp
-((nil . ((code-review-minimal-backend . gongfeng))))
+((nil . ((inline-review-backend . gongfeng))))
 ```
 
-Or interactively (persists to `.git/code-review-minimal-backend`):
+Or interactively (persists to `.git/inline-review-backend`):
 
 ```
-M-x code-review-minimal-set-backend-for-repo
+M-x inline-review-set-backend-for-repo
 ```
 
 ### Adding a custom backend
 
 The backend registry is public. You can add support for any additional forge
 without modifying or forking this package. Call
-`code-review-minimal-register-backend` from your Emacs init after the package
+`inline-review-register-backend` from your Emacs init after the package
 is loaded:
 
 ```elisp
-(with-eval-after-load 'code-review-minimal
+(with-eval-after-load 'inline-review
 
   ;; Optional: declare the base URL as a custom variable
   (defcustom my-forgejo-api-url "https://forgejo.example.com/api/v1"
     "API base URL for my Forgejo instance."
     :type 'string)
 
-  (code-review-minimal-register-backend
+  (inline-review-register-backend
     'forgejo
     :api-url-var  'my-forgejo-api-url
     :remote-re     "forgejo\\.example\\.com"
@@ -246,22 +246,22 @@ User-registered backends are prepended to the registry and therefore take
 precedence over the built-in ones for remote-URL matching.
 
 The four functions must follow the same async conventions as the built-in
-backends — see the commentary in any of the `code-review-minimal-*.el` files
+backends — see the commentary in any of the `inline-review-*.el` files
 for the expected signatures and patterns.
 
 ### Faces
 
 All faces have dark- and light-theme variants and are defined in
-`code-review-minimal-custom.el` alongside the customization variables:
+`inline-review-custom.el` alongside the customization variables:
 
 | Face | Used for |
 |------|----------|
-| `code-review-minimal-comment-face` | Unresolved comment body |
-| `code-review-minimal-resolved-body-face` | Resolved comment body |
-| `code-review-minimal-input-face` | Comment input overlay |
-| `code-review-minimal-header-face` | Author / date header line |
-| `code-review-minimal-resolved-face` | ✓resolved status indicator |
-| `code-review-minimal-unresolved-face` | ○open status indicator |
+| `inline-review-comment-face` | Unresolved comment body |
+| `inline-review-resolved-body-face` | Resolved comment body |
+| `inline-review-input-face` | Comment input overlay |
+| `inline-review-header-face` | Author / date header line |
+| `inline-review-resolved-face` | ✓resolved status indicator |
+| `inline-review-unresolved-face` | ○open status indicator |
 
 ## Supported platforms
 
@@ -287,7 +287,7 @@ All faces have dark- and light-theme variants and are defined in
 
 **Wrong backend detected**
 
-- Use `M-x code-review-minimal-set-backend-for-repo` to persist the correct
+- Use `M-x inline-review-set-backend-for-repo` to persist the correct
   backend for the repository.
 - Or set it via `.dir-locals.el` (see Configuration above).
 
@@ -295,11 +295,11 @@ All faces have dark- and light-theme variants and are defined in
 
 - Confirm the MR/PR URL is correct and the MR is open.
 - Check `*Messages*` for API error details.
-- Try `M-x code-review-minimal-refresh`.
+- Try `M-x inline-review-refresh`.
 
 **API errors for self-hosted instances**
 
-- Ensure `code-review-minimal-*-api-url` matches your instance's API root.
+- Ensure `inline-review-*-api-url` matches your instance's API root.
 
 ## License
 
