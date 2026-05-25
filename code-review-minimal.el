@@ -372,27 +372,25 @@ giving a quick overview of the scope of the MR/PR under review."
     (unless root
       (user-error "code-review-minimal: not inside a git repository"))
     (let* ((outbuf (get-buffer-create "*code-review-minimal-overview*"))
-           (errbuf (get-buffer-create " *crm-overview-err*"))
            (default-directory root))
-      (with-current-buffer errbuf (erase-buffer))
       (with-current-buffer outbuf
         (let ((inhibit-read-only t))
           (erase-buffer)
-          (let ((rc (call-process "git" nil (list outbuf errbuf) nil
+          (let ((rc (call-process "git" nil (list outbuf t) nil
                                   "diff" "--stat"
                                   target source)))
             (if (and (integerp rc) (zerop rc))
                 (progn
                   (goto-char (point-min))
                   (view-mode 1))
-              (let ((err (with-current-buffer errbuf (buffer-string))))
+              (let ((err (string-trim (buffer-string))))
                 (erase-buffer)
                 (insert
                  (format "git diff --stat %s %s failed%s\n"
                          target source
                          (if (string-empty-p err)
                              ""
-                           (format ": %s" (string-trim err)))))
+                           (format ": %s" err))))
                 (goto-char (point-min))
                 (view-mode 1))))))
       (pop-to-buffer outbuf))))
