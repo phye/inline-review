@@ -338,8 +338,9 @@ posted a new comment)."
 ;;;###autoload
 (defun inline-review-overview ()
   "Pop up a read-only buffer with `git diff --stat' between source and target branch.
-Shows a summary of which files changed and how many lines were added/removed,
-giving a quick overview of the scope of the MR/PR under review."
+Fetches the latest refs from origin each time and diffs against remote-tracking
+branches (origin/source vs origin/target) to ensure the stat reflects the most
+up-to-date remote state rather than potentially stale local branches."
   (interactive)
   (unless (inline-review--review-in-progress-p)
     (user-error
@@ -371,29 +372,42 @@ giving a quick overview of the scope of the MR/PR under review."
 (wait for branch resolution to complete)"))
     (unless root
       (user-error "inline-review: not inside a git repository"))
-    (let* ((outbuf (get-buffer-create "*inline-review-overview*"))
-           (default-directory root))
-      (with-current-buffer outbuf
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (let ((rc (call-process "git" nil (list outbuf t) nil
-                                  "diff" "--stat"
-                                  target source)))
-            (if (and (integerp rc) (zerop rc))
-                (progn
+    ;; Use remote-tracking refs so the diff reflects the latest remote state
+    ;; rather than potentially outdated local branches.
+    (let* ((default-directory root)
+           (remote-source
+            (if (string-prefix-p "origin/" source)
+                source
+              (concat "origin/" source)))
+           (remote-target
+            (if (string-prefix-p "origin/" target)
+                target
+              (concat "origin/" target))))
+      ;; Fetch the two branches from origin to ensure we have up-to-date refs.
+      (call-process "git" nil nil nil
+                    "fetch" "origin" source target)
+      (let ((outbuf (get-buffer-create "*inline-review-overview*")))
+        (with-current-buffer outbuf
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (let ((rc (call-process "git" nil (list outbuf t) nil
+                                    "diff" "--stat"
+                                    remote-target remote-source)))
+              (if (and (integerp rc) (zerop rc))
+                  (progn
+                    (goto-char (point-min))
+                    (view-mode 1))
+                (let ((err (string-trim (buffer-string))))
+                  (erase-buffer)
+                  (insert
+                   (format "git diff --stat %s %s failed%s\n"
+                           remote-target remote-source
+                           (if (string-empty-p err)
+                               ""
+                             (format ": %s" err))))
                   (goto-char (point-min))
-                  (view-mode 1))
-              (let ((err (string-trim (buffer-string))))
-                (erase-buffer)
-                (insert
-                 (format "git diff --stat %s %s failed%s\n"
-                         target source
-                         (if (string-empty-p err)
-                             ""
-                           (format ": %s" err))))
-                (goto-char (point-min))
-                (view-mode 1))))))
-      (pop-to-buffer outbuf))))
+                  (view-mode 1))))))
+        (pop-to-buffer outbuf)))))
 
 ;;;###autoload
 (defun inline-review-set-backend-for-repo (backend)
@@ -440,6 +454,8 @@ Commands:
   `inline-review-previous-thread'    - go to previous comment thread (cross-file)
   `inline-review-next-hunk'          - go to next diff hunk (cross-file)
   `inline-review-previous-hunk'      - go to previous diff hunk (cross-file)
+  `inline-review-first-hunk'         - go to first diff hunk in project
+  `inline-review-last-hunk'          - go to last diff hunk in project
   `inline-review-view-removed-lines' - view full removed block at point
   `inline-review-resolve-comment'   - resolve comment at point
   `inline-review-toggle-hide-resolved' - toggle visibility of resolved threads

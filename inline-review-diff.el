@@ -15,6 +15,8 @@
 ;;   `inline-review-view-removed-lines'     — popup with full removed block
 ;;   `inline-review-next-hunk'              — go to next diff hunk
 ;;   `inline-review-previous-hunk'          — go to previous diff hunk
+;;   `inline-review-first-hunk'             — go to first diff hunk in project
+;;   `inline-review-last-hunk'              — go to last diff hunk in project
 ;;
 ;; Faces are defined in inline-review-custom.el:
 ;;   `inline-review-hunk-added-face'
@@ -465,6 +467,32 @@ Stops at the first hunk with a message rather than wrapping to the last."
     (if prev
         (inline-review--goto-hunk (car prev) (cdr prev))
       (message "inline-review: no more hunks in this project"))))
+
+;;;###autoload
+(defun inline-review-first-hunk ()
+  "Move point to the first diff hunk within the current project."
+  (interactive)
+  (unless (inline-review--review-in-progress-p)
+    (user-error
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let ((all (inline-review--all-hunk-positions)))
+    (if all
+        (let ((first (car all)))
+          (inline-review--goto-hunk (car first) (cdr first)))
+      (message "inline-review: no hunks in this project"))))
+
+;;;###autoload
+(defun inline-review-last-hunk ()
+  "Move point to the last diff hunk within the current project."
+  (interactive)
+  (unless (inline-review--review-in-progress-p)
+    (user-error
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let ((all (inline-review--all-hunk-positions)))
+    (if all
+        (let ((last (car (last all))))
+          (inline-review--goto-hunk (car last) (cdr last)))
+      (message "inline-review: no hunks in this project"))))
 
 ;;;; ─── Diff Cache ─────────────────────────────────────────────────────────────
 
