@@ -340,7 +340,10 @@ posted a new comment)."
   "Pop up a read-only buffer with `git diff --stat' between source and target branch.
 Fetches the latest refs from origin each time and diffs against remote-tracking
 branches (origin/source vs origin/target) to ensure the stat reflects the most
-up-to-date remote state rather than potentially stale local branches."
+up-to-date remote state rather than potentially stale local branches.
+
+If `magit' is installed, uses `magit-diff' instead so you can jump to
+files directly from the diff buffer."
   (interactive)
   (unless (inline-review--review-in-progress-p)
     (user-error
@@ -386,28 +389,31 @@ up-to-date remote state rather than potentially stale local branches."
       ;; Fetch the two branches from origin to ensure we have up-to-date refs.
       (call-process "git" nil nil nil
                     "fetch" "origin" source target)
-      (let ((outbuf (get-buffer-create "*inline-review-overview*")))
-        (with-current-buffer outbuf
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (let ((rc (call-process "git" nil (list outbuf t) nil
-                                    "diff" "--stat"
-                                    remote-target remote-source)))
-              (if (and (integerp rc) (zerop rc))
-                  (progn
+      (if (fboundp 'magit-diff-range)
+          (magit-diff-range (concat remote-target "..." remote-source)
+                            '("--stat"))
+        (let* ((outbuf (get-buffer-create "*inline-review-overview*")))
+          (with-current-buffer outbuf
+            (let ((inhibit-read-only t))
+              (erase-buffer)
+              (let ((rc (call-process "git" nil (list outbuf t) nil
+                                      "diff" "--stat"
+                                      remote-target remote-source)))
+                (if (and (integerp rc) (zerop rc))
+                    (progn
+                      (goto-char (point-min))
+                      (view-mode 1))
+                  (let ((err (string-trim (buffer-string))))
+                    (erase-buffer)
+                    (insert
+                     (format "git diff --stat %s %s failed%s\n"
+                             remote-target remote-source
+                             (if (string-empty-p err)
+                                 ""
+                               (format ": %s" err))))
                     (goto-char (point-min))
-                    (view-mode 1))
-                (let ((err (string-trim (buffer-string))))
-                  (erase-buffer)
-                  (insert
-                   (format "git diff --stat %s %s failed%s\n"
-                           remote-target remote-source
-                           (if (string-empty-p err)
-                               ""
-                             (format ": %s" err))))
-                  (goto-char (point-min))
-                  (view-mode 1))))))
-        (pop-to-buffer outbuf)))))
+                    (view-mode 1))))))
+          (pop-to-buffer outbuf))))))
 
 ;;;###autoload
 (defun inline-review-set-backend-for-repo (backend)
