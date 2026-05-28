@@ -392,15 +392,16 @@ the user accepts the empty default."
                    branch
                    (if (string-empty-p err)
                        ""
-                     (format " \u2014 %s" (string-trim err)))))))
-            (message "inline-review: checked out branch %s" branch)
-            ;; Pull to sync with remote before rendering overlays.
-            (inline-review--pull-current-branch)
-            ;; Revert the buffer so its content matches the newly-checked-out
-            ;; file; the diff's new-file line numbers reference this version.
-            (when (and buffer-file-name
-                       (file-readable-p buffer-file-name))
-              (revert-buffer t t))))))))
+                     (format " \u2014 %s" (string-trim err))))))))
+          ;; After successful checkout (plain or retry), always pull to sync
+          ;; with remote before rendering overlays so we view the correct diff.
+          (message "inline-review: checked out branch %s" branch)
+          (inline-review--pull-current-branch)
+          ;; Revert the buffer so its content matches the newly-checked-out
+          ;; file; the diff's new-file line numbers reference this version.
+          (when (and buffer-file-name
+                     (file-readable-p buffer-file-name))
+            (revert-buffer t t)))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 
