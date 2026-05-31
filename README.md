@@ -1,5 +1,7 @@
 # inline-review
 
+[TOC]
+
 > **Note:** Most of the code in this repository was generated with
 > [Claude Code](https://claude.ai/code).
 
@@ -13,7 +15,7 @@ TODO(phye): add more snapshots
 
 - By "extensible", it was designed from DAY ONE with the idea that there're many git forges all over the world (and there will be more, if you count in on premises forge vendor), hence it MUST BE EASY to support other unknown forges. Given this design decision, if you need to add other forge, simply refer to `inline-review-backend-registry` doc string for how to add one. When you're ready, just invoke `inline-review-register-backend` to register your own forge in your init.el, with this package unchanged.
 
-- By "focusing on code review", the following features are **deliberately** chosen to be implemented(another major diff with [forge](https://github.com/magit/forge)):
+- By "focusing on code review", **only the following code-review related features** are **deliberately** chosen to be implemented(another major diff with [forge](https://github.com/magit/forge)):
   - auto forge induction: all the user needs to provide is the MR/PR url, no more info required
   - overview: show LOC distribution of the MR/PR
   - inline diff rendering: added/deleted lines are marked via overlay
