@@ -1,7 +1,5 @@
 # inline-review
 
-[TOC]
-
 > **Note:** Most of the code in this repository was generated with
 > [Claude Code](https://claude.ai/code).
 
