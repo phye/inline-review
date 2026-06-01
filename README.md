@@ -1,7 +1,7 @@
 # inline-review
 
 > **Note:** Most of the code in this repository was generated with
-> [Claude Code](https://claude.ai/code).
+> [Claude Code](https://claude.ai/code) but with careful review/fix/reorg by human.
 
 <img src="./images/inline-review-demo.png" width="800">
 
