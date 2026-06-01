@@ -3,7 +3,7 @@
 > **Note:** Most of the code in this repository was generated with
 > [Claude Code](https://claude.ai/code).
 
-TODO(phye): add more snapshots
+<img src="./images/inline-review-demo.png" width="800">
 
 ## Introduction
 
