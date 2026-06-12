@@ -149,6 +149,8 @@ The lookup order for each host is:
 | `inline-review-refresh` | Re-fetch and redisplay all comments and diff hunks |
 | `inline-review-next-thread` | Jump to the next comment thread (cross-file) |
 | `inline-review-previous-thread` | Jump to the previous comment thread (cross-file) |
+| `inline-review-first-thread` | Jump to the first comment thread in the project |
+| `inline-review-last-thread` | Jump to the last comment thread in the project |
 | `inline-review-next-hunk` | Jump to the next diff hunk (cross-file) |
 | `inline-review-previous-hunk` | Jump to the previous diff hunk (cross-file) |
 | `inline-review-first-hunk` | Jump to the first diff hunk in the project |
@@ -201,6 +203,7 @@ opens the file directly.
 All navigation commands work **cross-file** within the current project:
 
 - `M-x inline-review-next-thread` / `M-x inline-review-previous-thread` — jump between comment threads
+- `M-x inline-review-first-thread` / `M-x inline-review-last-thread` — jump to the first / last comment thread
 - `M-x inline-review-next-hunk` / `M-x inline-review-previous-hunk` — jump between diff hunks
 - `M-x inline-review-first-hunk` / `M-x inline-review-last-hunk` — jump to the first / last hunk
 

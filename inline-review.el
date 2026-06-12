@@ -477,6 +477,8 @@ Commands:
   `inline-review-overview'          - show git diff --stat for this MR/PR
   `inline-review-next-thread'        - go to next comment thread (cross-file)
   `inline-review-previous-thread'    - go to previous comment thread (cross-file)
+  `inline-review-first-thread'       - go to first comment thread in project
+  `inline-review-last-thread'        - go to last comment thread in project
   `inline-review-next-hunk'          - go to next diff hunk (cross-file)
   `inline-review-previous-hunk'      - go to previous diff hunk (cross-file)
   `inline-review-first-hunk'         - go to first diff hunk in project

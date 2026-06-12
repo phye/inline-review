@@ -35,6 +35,8 @@
 ;;     `inline-review-delete-comment'
 ;;     `inline-review-next-thread'
 ;;     `inline-review-previous-thread'
+;;     `inline-review-first-thread'
+;;     `inline-review-last-thread'
 ;;     `inline-review-toggle-hide-resolved'
 ;;   Backend dispatch:
 ;;     `inline-review--post-comment'
@@ -553,6 +555,32 @@ Stops at the first thread with a message rather than wrapping to the last."
     (if prev
         (inline-review--goto-hunk (car prev) (cdr prev))
       (message "inline-review: no more comment threads in this project"))))
+
+;;;###autoload
+(defun inline-review-first-thread ()
+  "Move point to the first comment thread within the current project."
+  (interactive)
+  (unless (inline-review--review-in-progress-p)
+    (user-error
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let ((all (inline-review--all-thread-positions)))
+    (if all
+        (let ((first (car all)))
+          (inline-review--goto-hunk (car first) (cdr first)))
+      (message "inline-review: no comment threads in this project"))))
+
+;;;###autoload
+(defun inline-review-last-thread ()
+  "Move point to the last comment thread within the current project."
+  (interactive)
+  (unless (inline-review--review-in-progress-p)
+    (user-error
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let ((all (inline-review--all-thread-positions)))
+    (if all
+        (let ((last (car (last all))))
+          (inline-review--goto-hunk (car last) (cdr last)))
+      (message "inline-review: no comment threads in this project"))))
 
 ;;;; ─── Backend Dispatch ───────────────────────────────────────────────────────
 
