@@ -211,11 +211,11 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
           (propertize (concat
                        (cond
                         (editing
-                         "  ┌─ Edit CR comment ")
+                         "  Edit CR comment ")
                         (replying
-                         "  ┌─ Reply to CR comment ")
+                         "  Reply to CR comment ")
                         (t
-                         "  ┌─ New CR comment "))
+                         "  New CR comment "))
                        (propertize "(C-c C-c submit, C-c C-k cancel)"
                                    'face
                                    '(:weight normal :slant italic))
