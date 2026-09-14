@@ -366,9 +366,9 @@ If REPLY-NOTE-ID is non-nil, the submission will post a reply to that thread."
              (plist-get th :note-id)
              (plist-get th :outdated))
             (cl-incf count)))
-        (message
-         "inline-review: %d thread(s) in this file, %d total."
-         count (length threads))))))
+        (when-let ((rel (inline-review--relative-file-path)))
+          (message "inline-review: %s:%d, TNB:%d, TNA:%d"
+                   rel (line-number-at-pos) count (length threads)))))))
 
 ;;;; ─── Thread Navigation Helpers ──────────────────────────────────────────────
 

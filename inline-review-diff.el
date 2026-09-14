@@ -33,6 +33,10 @@
 
 ;; Forward declaration — authoritative definition is in inline-review.el.
 (defvar inline-review-mode)
+;; Forward declarations for cross-file references used by --goto-hunk.
+(defvar inline-review--overlays)
+(declare-function inline-review--all-thread-positions
+                  "inline-review-comment")
 
 (defvar-local inline-review--hunk-overlays nil
   "List of hunk highlight overlays managed by `inline-review-mode'.")
@@ -428,7 +432,12 @@ and overview continue to work there."
     (goto-char (point-min))
     (forward-line (1- line))
     (when-let ((rel (inline-review--relative-file-path)))
-      (message "inline-review: %s:%d" rel line))))
+      (let ((tnb (length (cl-remove-if-not
+                          (lambda (ov) (overlay-get ov 'inline-review))
+                          inline-review--overlays)))
+            (tna (length (inline-review--all-thread-positions))))
+        (message "inline-review: %s:%d, TNB:%d, TNA:%d"
+                 rel line tnb tna)))))
 
 ;;;###autoload
 (defun inline-review-next-hunk ()
