@@ -426,7 +426,9 @@ and overview continue to work there."
     (unless (bound-and-true-p inline-review-mode)
       (inline-review-mode 1))
     (goto-char (point-min))
-    (forward-line (1- line))))
+    (forward-line (1- line))
+    (when-let ((rel (inline-review--relative-file-path)))
+      (message "inline-review: %s:%d" rel line))))
 
 ;;;###autoload
 (defun inline-review-next-hunk ()
