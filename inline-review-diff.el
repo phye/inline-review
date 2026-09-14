@@ -409,7 +409,8 @@ and overview continue to work there."
         (src-mr-id         inline-review--mr-id)
         (src-proj          inline-review--project-info)
         (src-source-branch inline-review--mr-source-branch)
-        (src-target-branch inline-review--mr-target-branch))
+        (src-target-branch inline-review--mr-target-branch)
+        (src-thread-count  inline-review--mr-thread-count))
     (unless (and buffer-file-name
                  (string=
                   (expand-file-name buffer-file-name) abs-path))
@@ -427,6 +428,8 @@ and overview continue to work there."
       (setq inline-review--mr-source-branch src-source-branch))
     (when (and src-target-branch (not inline-review--mr-target-branch))
       (setq inline-review--mr-target-branch src-target-branch))
+    (when (and src-thread-count (not inline-review--mr-thread-count))
+      (setq inline-review--mr-thread-count src-thread-count))
     (unless (bound-and-true-p inline-review-mode)
       (inline-review-mode 1))
     (goto-char (point-min))
@@ -435,7 +438,8 @@ and overview continue to work there."
       (let ((tnb (length (cl-remove-if-not
                           (lambda (ov) (overlay-get ov 'inline-review))
                           inline-review--overlays)))
-            (tna (length (inline-review--all-thread-positions))))
+            (tna (or inline-review--mr-thread-count
+                     (length (inline-review--all-thread-positions)))))
         (message "inline-review: %s:%d, TNB:%d, TNA:%d"
                  rel line tnb tna)))))
 

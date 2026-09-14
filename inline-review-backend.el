@@ -445,6 +445,12 @@ GitLab/Gongfeng: ((project-id . \"namespace%2Fproject\"))")
 (defvar-local inline-review--current-backend nil
   "The backend symbol currently in use (github, gitlab, gongfeng).")
 
+(defvar-local inline-review--mr-thread-count nil
+  "Total number of comment threads in the MR currently being reviewed.
+Set by `inline-review--render-comment-threads' from the full thread list
+returned by the backend, and propagated across buffer switches so that
+thread/hunk navigation messages report a consistent MR-wide total.")
+
 ;;;; ─── Shared Utility Helpers ─────────────────────────────────────────────────
 
 (defun inline-review--relative-file-path ()
