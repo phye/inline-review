@@ -66,6 +66,7 @@
 (require 'inline-review-branch)
 (require 'inline-review-diff)
 (require 'inline-review-comment)
+(require 'inline-review-overview)
 (require 'inline-review-github)
 (require 'inline-review-gitlab)
 (require 'inline-review-gongfeng)
@@ -334,105 +335,6 @@ posted a new comment)."
    inline-review--current-backend)
   (message "inline-review: refreshing...")
   (inline-review--refresh-overlays))
-
-(defun inline-review--overview-open-file (button)
-  "Open the file associated with BUTTON in the overview buffer."
-  (find-file (button-get button 'inline-review-file)))
-
-;;;###autoload
-(defun inline-review-overview ()
-  "Pop up a read-only buffer with `git diff --stat' between source and target branch.
-Fetches the latest refs from origin each time and diffs against remote-tracking
-branches (origin/source vs origin/target) to ensure the stat reflects the most
-up-to-date remote state rather than potentially stale local branches."
-  (interactive)
-  (unless (inline-review--review-in-progress-p)
-    (user-error
-     "inline-review: no active review — run `inline-review-review-url' first"))
-  (let ((source inline-review--mr-source-branch)
-        (target inline-review--mr-target-branch)
-        (root   (inline-review--git-root)))
-    ;; Fallback: if the current buffer doesn't have branch names (e.g. the
-    ;; user called `overview' from a file that was never opened via
-    ;; `--goto-hunk'), scan all live buffers where inline-review-mode
-    ;; is active and borrow the names from the first one that has them.
-    (unless (and source target)
-      (dolist (buf (buffer-list))
-        (when (and (not (and source target))
-                   (buffer-live-p buf))
-          (with-current-buffer buf
-            (when (bound-and-true-p inline-review-mode)
-              (when (and (not source) inline-review--mr-source-branch)
-                (setq source inline-review--mr-source-branch))
-              (when (and (not target) inline-review--mr-target-branch)
-                (setq target inline-review--mr-target-branch)))))))
-    (unless source
-      (user-error
-       "inline-review: source branch not known yet \
-(wait for branch resolution to complete)"))
-    (unless target
-      (user-error
-       "inline-review: target branch not known yet \
-(wait for branch resolution to complete)"))
-    (unless root
-      (user-error "inline-review: not inside a git repository"))
-    ;; Use remote-tracking refs so the diff reflects the latest remote state
-    ;; rather than potentially outdated local branches.
-    (let* ((default-directory root)
-           (remote-source
-            (if (string-prefix-p "origin/" source)
-                source
-              (concat "origin/" source)))
-           (remote-target
-            (if (string-prefix-p "origin/" target)
-                target
-              (concat "origin/" target))))
-      ;; Fetch the two branches from origin to ensure we have up-to-date refs.
-      (call-process "git" nil nil nil
-                    "fetch" "origin" source target)
-      (let* ((outbuf (get-buffer-create "*inline-review-overview*")))
-        (with-current-buffer outbuf
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (let ((rc (call-process "git" nil (list outbuf t) nil
-                                    "diff" "--stat"
-                                    remote-target remote-source)))
-              (if (and (integerp rc) (zerop rc))
-                  (progn
-                    (goto-char (point-min))
-                    (while (re-search-forward
-                            "^ \\([^|\n]+?\\) *|" nil t)
-                      (let* ((file-str (string-trim (match-string 1)))
-                             (file (cond
-                                    ((string-match
-                                      "\\`\\(.+\\) => \\(.+\\)\\'"
-                                      file-str)
-                                     (match-string 2 file-str))
-                                    (t file-str)))
-                             (abs-file (expand-file-name file root))
-                             (beg (match-beginning 1))
-                             (end (match-end 1)))
-                        (make-text-button
-                         beg end
-                         'inline-review-file abs-file
-                         'action
-                         'inline-review--overview-open-file
-                         'follow-link t
-                         'help-echo "Click to open file"
-                         'face 'link)))
-                    (goto-char (point-min))
-                    (view-mode 1))
-                (let ((err (string-trim (buffer-string))))
-                  (erase-buffer)
-                  (insert
-                   (format "git diff --stat %s %s failed%s\n"
-                           remote-target remote-source
-                           (if (string-empty-p err)
-                               ""
-                             (format ": %s" err))))
-                  (goto-char (point-min))
-                  (view-mode 1))))))
-        (pop-to-buffer outbuf)))))
 
 ;;;###autoload
 (defun inline-review-set-backend-for-repo (backend)
