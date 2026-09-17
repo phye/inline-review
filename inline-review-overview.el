@@ -243,18 +243,16 @@ No-op with a message if the current line is a directory entry."
 (defun inline-review-overview-next-entry ()
   "Move point to the next tree entry (directory or file button)."
   (interactive)
-  (let ((next (next-button (point))))
-    (if next
-        (goto-char (button-start next))
-      (user-error "inline-review: no next entry"))))
+  (condition-case nil
+      (forward-button 1 nil nil)
+    (error (user-error "inline-review: no next entry"))))
 
 (defun inline-review-overview-previous-entry ()
   "Move point to the previous tree entry (directory or file button)."
   (interactive)
-  (let ((prev (previous-button (point))))
-    (if prev
-        (goto-char (button-start prev))
-      (user-error "inline-review: no previous entry"))))
+  (condition-case nil
+      (backward-button 1 nil nil)
+    (error (user-error "inline-review: no previous entry"))))
 
 ;;;; ─── Mode ──────────────────────────────────────────────────────────────────
 
@@ -264,6 +262,7 @@ No-op with a message if the current line is a directory entry."
     (define-key m (kbd "n") #'inline-review-overview-next-entry)
     (define-key m (kbd "p") #'inline-review-overview-previous-entry)
     (define-key m (kbd "o") #'inline-review-overview-open-file-other-window)
+    (define-key m (kbd "<RET>") #'inline-review-overview-open-file-other-window)
     m)
   "Keymap for `inline-review-overview-mode'.")
 
@@ -278,6 +277,13 @@ move between entries; RET toggles a directory or opens a file
 \\[inline-review-overview-open-file-other-window]
 always opens the file on the current line in another window."
   :group 'inline-review)
+
+;; Evil users: force `emacs' state so our local keymap wins over
+;; `evil-normal-state-map' bindings for `n', `p', `o', RET etc.  This is
+;; a no-op when evil is not loaded.
+(with-eval-after-load 'evil
+  (when (fboundp 'evil-set-initial-state)
+    (evil-set-initial-state 'inline-review-overview-mode 'emacs)))
 
 ;;;; ─── Entry Point ───────────────────────────────────────────────────────────
 
@@ -335,18 +341,24 @@ local branches."
             (erase-buffer)
             (let ((rc (call-process "git" nil (list outbuf t) nil
                                     "diff" "--stat"
+                                    "--stat-width=9999"
+                                    "--stat-name-width=9999"
+                                    "--stat-graph-width=20"
                                     remote-target remote-source)))
               (if (and (integerp rc) (zerop rc))
                   (let* ((parsed (inline-review--overview-parse-stat))
                          (entries (plist-get parsed :entries))
-                         (summary (plist-get parsed :summary)))
-                    (setq inline-review--overview-tree
-                          (inline-review--overview-build-tree entries)
-                          inline-review--overview-folded
-                          (make-hash-table :test 'equal)
-                          inline-review--overview-summary summary
-                          inline-review--overview-root root)
+                         (summary (plist-get parsed :summary))
+                         (tree (inline-review--overview-build-tree entries)))
+                    ;; Enable the mode *before* populating buffer-local
+                    ;; state — `define-derived-mode' runs
+                    ;; `kill-all-local-variables' on entry.
                     (inline-review-overview-mode)
+                    (setq inline-review--overview-tree    tree
+                          inline-review--overview-folded  (make-hash-table
+                                                           :test 'equal)
+                          inline-review--overview-summary summary
+                          inline-review--overview-root    root)
                     (inline-review--overview-refresh))
                 (let ((err (string-trim (buffer-string))))
                   (erase-buffer)
