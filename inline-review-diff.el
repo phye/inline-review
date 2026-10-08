@@ -333,6 +333,45 @@ ANCHOR is the new-file line number after which the removed lines should appear;
 
 ;;;; ─── Hunk Navigation Helpers ────────────────────────────────────────────────
 
+(defun inline-review--path-overview-less (a b)
+  "Return non-nil if path A sorts before path B in overview tree order.
+At each directory level, subdirectories come before files, each group
+sorted alphabetically — matching the traversal performed by
+`inline-review-overview-next-entry' over the `*inline-review-overview*'
+tree.  A and B may be absolute or relative; any shared root prefix
+compares equal and the ordering is determined by the first differing
+segment."
+  (let* ((as (split-string a "/" t))
+         (bs (split-string b "/" t))
+         (al (length as))
+         (bl (length bs))
+         (lim (min al bl))
+         (i 0)
+         (decided nil)
+         (result nil))
+    (while (and (not decided) (< i lim))
+      (let* ((ai (nth i as))
+             (bi (nth i bs))
+             (a-dir (< i (1- al)))
+             (b-dir (< i (1- bl))))
+        (cond
+         ((string= ai bi)
+          (cond
+           ((and a-dir b-dir) (setq i (1+ i)))
+           ((and (not a-dir) (not b-dir))
+            (setq decided t))
+           (a-dir
+            (setq decided t result t))
+           (t
+            (setq decided t))))
+         (t
+          (setq decided t)
+          (cond
+           ((and a-dir (not b-dir)) (setq result t))
+           ((and (not a-dir) b-dir) (setq result nil))
+           (t (setq result (string< ai bi))))))))
+    result))
+
 (defun inline-review--all-hunk-positions ()
   "Return a sorted list of (ABS-PATH . LINE) for every hunk in the current MR diff.
 ABS-PATH is the absolute path to the new-side file; LINE is the hunk's new-start line.
@@ -388,7 +427,7 @@ Returns nil when no diff data is cached yet."
               (push (cons abs (plist-get hunk :new-start)) result)))))
       (sort result
             (lambda (a b)
-              (or (string< (car a) (car b))
+              (or (inline-review--path-overview-less (car a) (car b))
                   (and (string= (car a) (car b))
                        (< (cdr a) (cdr b)))))))))
 
@@ -455,7 +494,8 @@ Stops at the last hunk with a message rather than wrapping to the first."
          (cur (inline-review--current-hunk-key))
          (next (cl-find-if
                 (lambda (entry)
-                  (or (string< (car cur) (car entry))
+                  (or (inline-review--path-overview-less
+                       (car cur) (car entry))
                       (and (string= (car cur) (car entry))
                            (< (cdr cur) (cdr entry)))))
                 all)))
@@ -475,7 +515,8 @@ Stops at the first hunk with a message rather than wrapping to the last."
          (cur (inline-review--current-hunk-key))
          (prev (cl-find-if
                 (lambda (entry)
-                  (or (string< (car entry) (car cur))
+                  (or (inline-review--path-overview-less
+                       (car entry) (car cur))
                       (and (string= (car entry) (car cur))
                            (< (cdr entry) (cdr cur)))))
                 (reverse all))))
