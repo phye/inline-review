@@ -256,15 +256,43 @@ No-op with a message if the current line is a directory entry."
 
 ;;;; ─── Mode ──────────────────────────────────────────────────────────────────
 
-(defvar inline-review-overview-mode-map
-  (let ((m (make-sparse-keymap)))
-    (define-key m (kbd "q") #'quit-window)
-    (define-key m (kbd "n") #'inline-review-overview-next-entry)
-    (define-key m (kbd "p") #'inline-review-overview-previous-entry)
-    (define-key m (kbd "o") #'inline-review-overview-open-file-other-window)
-    (define-key m (kbd "<RET>") #'inline-review-overview-open-file-other-window)
-    m)
-  "Keymap for `inline-review-overview-mode'.")
+(defvar inline-review-overview-mode-map (make-sparse-keymap)
+  "Keymap for `inline-review-overview-mode'.
+Populated from `inline-review-overview-key-bindings'; customize that
+variable via \\[customize-option] rather than editing this map directly
+so that changes made through Customize are honoured.")
+
+(defun inline-review--overview-apply-key-bindings (map bindings)
+  "Reset MAP and (re)install BINDINGS on it.
+BINDINGS is an alist of (KEY . COMMAND) where KEY is a `kbd' string."
+  (setcdr map nil)
+  (dolist (b bindings)
+    (define-key map (kbd (car b)) (cdr b))))
+
+(defcustom inline-review-overview-key-bindings
+  '(("q"     . quit-window)
+    ("n"     . inline-review-overview-next-entry)
+    ("p"     . inline-review-overview-previous-entry)
+    ("o"     . inline-review-overview-open-file-other-window)
+    ("<RET>" . inline-review-overview-open-file-other-window))
+  "Key bindings for `inline-review-overview-mode'.
+Each entry is (KEY . COMMAND), where KEY is a string in `kbd' notation
+and COMMAND is the command symbol to invoke.  Setting this via
+\\[customize-option] rebuilds `inline-review-overview-mode-map' so
+existing overview buffers pick up the new bindings on their next
+command lookup."
+  :type '(alist :key-type (string :tag "Key (kbd notation)")
+                :value-type (function :tag "Command"))
+  :group 'inline-review
+  :set (lambda (sym val)
+         (set-default sym val)
+         (when (boundp 'inline-review-overview-mode-map)
+           (inline-review--overview-apply-key-bindings
+            inline-review-overview-mode-map val))))
+
+(inline-review--overview-apply-key-bindings
+ inline-review-overview-mode-map
+ inline-review-overview-key-bindings)
 
 (define-derived-mode inline-review-overview-mode special-mode
   "IR-Overview"
@@ -344,7 +372,8 @@ local branches."
                                     "--stat-width=9999"
                                     "--stat-name-width=9999"
                                     "--stat-graph-width=20"
-                                    remote-target remote-source)))
+                                    (format "%s...%s"
+                                            remote-target remote-source))))
               (if (and (integerp rc) (zerop rc))
                   (let* ((parsed (inline-review--overview-parse-stat))
                          (entries (plist-get parsed :entries))
@@ -363,7 +392,7 @@ local branches."
                 (let ((err (string-trim (buffer-string))))
                   (erase-buffer)
                   (insert
-                   (format "git diff --stat %s %s failed%s\n"
+                   (format "git diff --stat %s...%s failed%s\n"
                            remote-target remote-source
                            (if (string-empty-p err)
                                ""
