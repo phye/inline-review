@@ -556,91 +556,16 @@ Stops at the first hunk with a message rather than wrapping to the last."
   "Return a cache key for the diff of BACKEND IID PROJECT-INFO."
   (list backend iid project-info))
 
-(defun inline-review--parse-git-diff (text)
-  "Parse unified diff TEXT (one or more files) into a list of change plists.
-Each plist has :old-path, :new-path, and :patch, matching the shape
-produced by backend :fetch-diff hooks.  The :patch string starts at the
-first `@@' header of the file so `inline-review--parse-patch' can
-consume it directly.  Deleted files have :new-path = \"/dev/null\",
-newly introduced files have :old-path = \"/dev/null\"."
-  (let ((lines (split-string text "\n"))
-        (result nil)
-        (old-path nil)
-        (new-path nil)
-        (patch-lines nil)
-        (in-patch nil))
-    (cl-labels
-        ((flush ()
-           (when (or old-path new-path)
-             (push (list :old-path (or old-path new-path)
-                         :new-path (or new-path old-path)
-                         :patch (and patch-lines
-                                     (mapconcat #'identity
-                                                (nreverse patch-lines)
-                                                "\n")))
-                   result))
-           (setq old-path nil
-                 new-path nil
-                 patch-lines nil
-                 in-patch nil)))
-      (dolist (line lines)
-        (cond
-         ((string-prefix-p "diff --git " line)
-          (flush))
-         ((and (not in-patch) (string-prefix-p "--- " line))
-          (let ((p (substring line 4)))
-            (setq old-path
-                  (cond ((string= p "/dev/null") "/dev/null")
-                        ((string-prefix-p "a/" p) (substring p 2))
-                        (t p)))))
-         ((and (not in-patch) (string-prefix-p "+++ " line))
-          (let ((p (substring line 4)))
-            (setq new-path
-                  (cond ((string= p "/dev/null") "/dev/null")
-                        ((string-prefix-p "b/" p) (substring p 2))
-                        (t p)))))
-         ((or in-patch (string-prefix-p "@@ " line))
-          (setq in-patch t)
-          (push line patch-lines))))
-      (flush))
-    (nreverse result)))
-
-(defun inline-review--git-fetch-diff ()
-  "Return the current MR's changes list via `git diff', or nil if impossible.
-Runs `git diff origin/target...origin/source' — the same ref range used
-by `inline-review-overview' — so hunk navigation and the overview tree
-always derive from the same underlying diff.  Returns nil (so the caller
-can fall back to the backend's :fetch-diff) when the git root or branch
-names are not yet known, or when the git command fails."
-  (let* ((root   (inline-review--git-root))
-         (source inline-review--mr-source-branch)
-         (target inline-review--mr-target-branch))
-    (when (and root source target)
-      (let* ((default-directory root)
-             (remote-source
-              (if (string-prefix-p "origin/" source)
-                  source
-                (concat "origin/" source)))
-             (remote-target
-              (if (string-prefix-p "origin/" target)
-                  target
-                (concat "origin/" target)))
-             (range (format "%s...%s" remote-target remote-source)))
-        (with-temp-buffer
-          (let ((rc (call-process "git" nil (current-buffer) nil
-                                  "diff" "--no-color" range)))
-            (when (and (integerp rc) (zerop rc))
-              (inline-review--parse-git-diff (buffer-string)))))))))
-
 (defun inline-review--fetch-diff-then
     (backend buf iid project-info rel-path on-done)
   "Fetch or reuse cached diff for BACKEND IID; render hunk overlays in BUF for REL-PATH.
 After hunk overlays are in place, call ON-DONE (a zero-argument function) to
 trigger the next rendering step (typically fetching comment threads).
-Prefers a `git diff' invocation matching the overview's ref range so the
-two file lists stay in sync; falls back to the backend's :fetch-diff hook
-only when the git-diff path is unavailable (e.g. source/target branches
-not yet resolved)."
+The cache always holds the backend's version-selection diff — i.e. the
+exact diff shown by the MR/PR web UI and the one against whose line
+numbers inline comments are anchored.  Hunk navigation and
+`inline-review-overview' both read from this cache, so their file lists
+match the comment-anchored view and stay in sync with each other."
   (let* ((key
           (inline-review--diff-cache-key
            backend iid project-info))
@@ -658,18 +583,12 @@ not yet resolved)."
                    "inline-review: file not changed in this MR — \
 use `inline-review-next-hunk' to navigate to changed files")))
               (funcall on-done)))))
-    (cond
-     (cached
-      (funcall render cached))
-     ((when-let ((changes (inline-review--git-fetch-diff)))
-        (puthash key changes inline-review--diff-cache)
-        (funcall render changes)
-        t))
-     (t
+    (if cached
+        (funcall render cached)
       (funcall (inline-review--backend-prop backend :fetch-diff)
                (lambda (changes)
                  (puthash key changes inline-review--diff-cache)
-                 (funcall render changes)))))))
+                 (funcall render changes))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 

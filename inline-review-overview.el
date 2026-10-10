@@ -6,11 +6,15 @@
 ;;; Commentary:
 ;;
 ;; The `*inline-review-overview*' buffer shows a folding tree of files
-;; changed in the current MR/PR (from `git diff --stat').  Directory
-;; nodes are togglable via RET; file nodes RET-open the file in another
-;; window (or the current window with a prefix argument).  `n'/`p'
-;; navigate between tree entries; `o' opens the file link on the
-;; current line in another window.
+;; changed in the current MR/PR.  The file list is derived from the
+;; same cached backend diff that drives `inline-review-next-hunk' /
+;; `inline-review-previous-hunk', so overview entries and hunk
+;; navigation always see an identical file set — the one the forge's
+;; MR UI shows and the one against whose line numbers inline comments
+;; are anchored.  Directory nodes are togglable via RET; file nodes
+;; RET-open the file in another window (or the current window with a
+;; prefix argument).  `n'/`p' navigate between tree entries; `o' opens
+;; the file link on the current line in another window.
 
 ;;; Code:
 
@@ -19,16 +23,20 @@
 (require 'subr-x)
 
 (declare-function inline-review--git-root                "inline-review-backend" ())
+(declare-function inline-review--backend-prop            "inline-review-backend" (backend prop))
+(declare-function inline-review--diff-cache-key          "inline-review-diff"    (backend iid project-info))
 (declare-function inline-review--review-in-progress-p    "inline-review"         ())
 (declare-function inline-review-mode                     "inline-review"         (&optional arg))
 
-(defvar inline-review--mr-source-branch)
-(defvar inline-review--mr-target-branch)
+(defvar inline-review--current-backend)
+(defvar inline-review--mr-iid)
+(defvar inline-review--project-info)
+(defvar inline-review--diff-cache)
 
 ;;;; ─── State ─────────────────────────────────────────────────────────────────
 
 (defvar-local inline-review--overview-tree nil
-  "Hash-table representing the parsed `git diff --stat' tree.
+  "Hash-table representing the file tree for the current MR.
 Directory nodes are nested hash-tables; file leaves are plists
 with `:file' (relative path) and `:stat' (visualisation string).")
 
@@ -62,32 +70,76 @@ hash-tables and file leaves are plists (`:file' `:stat')."
         (puthash (car segments) sub root))
       (inline-review--overview-tree-insert sub (cdr segments) leaf))))
 
-(defun inline-review--overview-parse-stat ()
-  "Parse `git diff --stat' output already in the current buffer.
-Returns a plist (:entries ENTRIES :summary SUMMARY) where ENTRIES is a
-list of (REL-PATH . STAT-STR) preserving git's order and SUMMARY is the
-trailing summary line, or nil."
-  (let ((entries nil)
-        (summary nil))
-    (goto-char (point-min))
-    (while (not (eobp))
-      (let ((line (buffer-substring-no-properties
-                   (line-beginning-position)
-                   (line-end-position))))
+(defun inline-review--overview-patch-counts (patch)
+  "Return (ADDED . REMOVED) line counts for PATCH string.
+Lines beginning with a single `+' or `-' count toward additions and
+removals; the diff header lines `+++' and `---' and the hunk header
+`@@' lines do not."
+  (let ((added 0)
+        (removed 0))
+    (when patch
+      (dolist (line (split-string patch "\n"))
         (cond
-         ((string-match
-           "\\` *\\([^|\n]+?\\) *|\\(.*\\)\\'" line)
-          (let ((file (match-string 1 line))
-                (stat (string-trim (match-string 2 line))))
-            (when (string-match
-                   "\\`\\(.+\\) => \\(.+\\)\\'" file)
-              (setq file (match-string 2 file)))
-            (push (cons file stat) entries)))
-         ((string-match
-           "\\` *[0-9]+ files? changed" line)
-          (setq summary (string-trim line)))))
-      (forward-line 1))
-    (list :entries (nreverse entries) :summary summary)))
+         ((string-prefix-p "+++" line))
+         ((string-prefix-p "---" line))
+         ((string-prefix-p "@@" line))
+         ((string-prefix-p "+" line) (cl-incf added))
+         ((string-prefix-p "-" line) (cl-incf removed)))))
+    (cons added removed)))
+
+(defun inline-review--overview-stat-string (added removed)
+  "Format a git-stat-like \"<total> <bar>\" string from ADDED and REMOVED.
+The bar is scaled so its total length never exceeds 20 characters,
+matching git's default `--stat-graph-width'."
+  (let* ((total (+ added removed))
+         (max-bar 20))
+    (cond
+     ((zerop total) "0")
+     ((<= total max-bar)
+      (format "%d %s%s"
+              total
+              (make-string added ?+)
+              (make-string removed ?-)))
+     (t
+      (let* ((scale (/ (float max-bar) total))
+             (p (max (if (zerop added) 0 1) (round (* added scale))))
+             (m (max (if (zerop removed) 0 1) (- max-bar p))))
+        (format "%d %s%s"
+                total
+                (make-string p ?+)
+                (make-string m ?-)))))))
+
+(defun inline-review--overview-entry-from-change (change)
+  "Return (REL-PATH . STAT-STR) for CHANGE plist, or nil to skip.
+Mirrors the filter used by `inline-review--all-hunk-positions' so the
+overview tree lists exactly the files hunk navigation visits — pure
+deletions (both paths resolve to \"/dev/null\" on the new side) are
+excluded."
+  (let* ((new (plist-get change :new-path))
+         (old (plist-get change :old-path))
+         (rel (or new old)))
+    (when (and rel (not (string= rel "/dev/null")))
+      (let* ((counts (inline-review--overview-patch-counts
+                      (plist-get change :patch)))
+             (stat (inline-review--overview-stat-string
+                    (car counts) (cdr counts))))
+        (cons rel stat)))))
+
+(defun inline-review--overview-summary-line (entries changes)
+  "Return the \"N files changed, …\" summary for ENTRIES/CHANGES, or nil."
+  (let ((files (length entries))
+        (added 0)
+        (removed 0))
+    (dolist (c changes)
+      (let ((counts (inline-review--overview-patch-counts
+                     (plist-get c :patch))))
+        (cl-incf added (car counts))
+        (cl-incf removed (cdr counts))))
+    (when (> files 0)
+      (format "%d file%s changed, %d insertion%s(+), %d deletion%s(-)"
+              files   (if (= files 1) "" "s")
+              added   (if (= added 1) "" "s")
+              removed (if (= removed 1) "" "s")))))
 
 (defun inline-review--overview-build-tree (entries)
   "Return a hash-table tree built from ENTRIES (list of (REL . STAT))."
@@ -321,88 +373,60 @@ always opens the file on the current line in another window."
 ;;;###autoload
 (defun inline-review-overview ()
   "Pop up a folding tree of files changed in the current MR/PR.
-Fetches the latest refs from origin each time and diffs against
-remote-tracking branches (origin/source vs origin/target) so the stat
-reflects the most up-to-date remote state rather than potentially stale
-local branches."
+The file list is derived from the backend's cached version-selection
+diff — the same source `inline-review-next-hunk' walks — so overview
+entries and hunk navigation always see an identical set of files, and
+every file shown is one against whose line numbers inline comments can
+be anchored.  If the diff hasn't been fetched yet, this triggers the
+backend's `:fetch-diff' once and renders when it returns.  Use
+`inline-review-refresh' to invalidate the cache and re-fetch."
   (interactive)
   (unless (inline-review--review-in-progress-p)
     (user-error
      "inline-review: no active review — run `inline-review-review-url' first"))
-  (let ((source inline-review--mr-source-branch)
-        (target inline-review--mr-target-branch)
-        (root   (inline-review--git-root)))
-    ;; Fallback: if the current buffer doesn't have branch names (e.g. the
-    ;; user called `overview' from a file that was never opened via
-    ;; `--goto-hunk'), scan all live buffers where inline-review-mode
-    ;; is active and borrow the names from the first one that has them.
-    (unless (and source target)
-      (dolist (buf (buffer-list))
-        (when (and (not (and source target))
-                   (buffer-live-p buf))
-          (with-current-buffer buf
-            (when (bound-and-true-p inline-review-mode)
-              (when (and (not source) inline-review--mr-source-branch)
-                (setq source inline-review--mr-source-branch))
-              (when (and (not target) inline-review--mr-target-branch)
-                (setq target inline-review--mr-target-branch)))))))
-    (unless source
-      (user-error
-       "inline-review: source branch not known yet \
-(wait for branch resolution to complete)"))
-    (unless target
-      (user-error
-       "inline-review: target branch not known yet \
-(wait for branch resolution to complete)"))
+  (let ((backend inline-review--current-backend)
+        (iid     inline-review--mr-iid)
+        (proj    inline-review--project-info)
+        (root    (inline-review--git-root)))
+    (unless backend
+      (user-error "inline-review: no backend set for this buffer"))
+    (unless iid
+      (user-error "inline-review: no MR IID set for this buffer"))
     (unless root
       (user-error "inline-review: not inside a git repository"))
-    (let* ((default-directory root)
-           (remote-source
-            (if (string-prefix-p "origin/" source)
-                source
-              (concat "origin/" source)))
-           (remote-target
-            (if (string-prefix-p "origin/" target)
-                target
-              (concat "origin/" target))))
-      (call-process "git" nil nil nil "fetch" "origin" source target)
-      (let ((outbuf (get-buffer-create "*inline-review-overview*")))
-        (with-current-buffer outbuf
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (let ((rc (call-process "git" nil (list outbuf t) nil
-                                    "diff" "--stat"
-                                    "--stat-width=9999"
-                                    "--stat-name-width=9999"
-                                    "--stat-graph-width=20"
-                                    (format "%s...%s"
-                                            remote-target remote-source))))
-              (if (and (integerp rc) (zerop rc))
-                  (let* ((parsed (inline-review--overview-parse-stat))
-                         (entries (plist-get parsed :entries))
-                         (summary (plist-get parsed :summary))
-                         (tree (inline-review--overview-build-tree entries)))
-                    ;; Enable the mode *before* populating buffer-local
-                    ;; state — `define-derived-mode' runs
-                    ;; `kill-all-local-variables' on entry.
-                    (inline-review-overview-mode)
-                    (setq inline-review--overview-tree    tree
-                          inline-review--overview-folded  (make-hash-table
-                                                           :test 'equal)
-                          inline-review--overview-summary summary
-                          inline-review--overview-root    root)
-                    (inline-review--overview-refresh))
-                (let ((err (string-trim (buffer-string))))
-                  (erase-buffer)
-                  (insert
-                   (format "git diff --stat %s...%s failed%s\n"
-                           remote-target remote-source
-                           (if (string-empty-p err)
-                               ""
-                             (format ": %s" err))))
-                  (goto-char (point-min))
-                  (inline-review-overview-mode))))))
-        (pop-to-buffer-same-window outbuf)))))
+    (let* ((key (inline-review--diff-cache-key backend iid proj))
+           (cached (gethash key inline-review--diff-cache)))
+      (if cached
+          (inline-review--overview-render-changes cached root)
+        (message "inline-review: fetching diff for overview...")
+        (funcall (inline-review--backend-prop backend :fetch-diff)
+                 (lambda (changes)
+                   (puthash key changes inline-review--diff-cache)
+                   (inline-review--overview-render-changes changes root)))))))
+
+(defun inline-review--overview-render-changes (changes root)
+  "Render the overview tree for CHANGES anchored at project ROOT."
+  (let* ((entries (delq nil
+                        (mapcar #'inline-review--overview-entry-from-change
+                                changes)))
+         (summary (inline-review--overview-summary-line entries changes))
+         (tree    (inline-review--overview-build-tree entries))
+         (outbuf  (get-buffer-create "*inline-review-overview*")))
+    (with-current-buffer outbuf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        ;; Enable the mode *before* populating buffer-local state —
+        ;; `define-derived-mode' runs `kill-all-local-variables'.
+        (inline-review-overview-mode)
+        (setq inline-review--overview-tree    tree
+              inline-review--overview-folded  (make-hash-table :test 'equal)
+              inline-review--overview-summary summary
+              inline-review--overview-root    root)
+        (if entries
+            (inline-review--overview-refresh)
+          (insert "inline-review: no files changed in this MR\n")
+          (goto-char (point-min)))))
+    (pop-to-buffer-same-window outbuf)))
 
 (provide 'inline-review-overview)
 ;;; inline-review-overview.el ends here
