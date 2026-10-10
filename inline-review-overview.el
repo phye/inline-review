@@ -27,6 +27,7 @@
 (declare-function inline-review--diff-cache-key          "inline-review-diff"    (backend iid project-info))
 (declare-function inline-review--review-in-progress-p    "inline-review"         ())
 (declare-function inline-review-mode                     "inline-review"         (&optional arg))
+(declare-function inline-review-refresh                  "inline-review"         ())
 
 (defvar inline-review--current-backend)
 (defvar inline-review--mr-iid)
@@ -48,6 +49,14 @@ with `:file' (relative path) and `:stat' (visualisation string).")
 
 (defvar-local inline-review--overview-root nil
   "Absolute project root corresponding to the tree entries.")
+
+(defvar-local inline-review--overview-origin-buffer nil
+  "Buffer from which the overview was invoked.
+Used by `inline-review-overview-refresh' and
+`inline-review-overview-regenerate' to run commands in the context of
+an `inline-review-mode' buffer that carries the MR state the overview
+needs.  When this buffer is dead, the wrapper commands fall back to any
+live `inline-review-mode' buffer under `inline-review--overview-root'.")
 
 ;;;; ─── Faces ─────────────────────────────────────────────────────────────────
 
@@ -309,6 +318,56 @@ No-op with a message if the current line is a directory entry."
       (backward-button 1 nil nil)
     (error (user-error "inline-review: no previous entry"))))
 
+;;;; ─── Refresh / Regenerate ──────────────────────────────────────────────────
+
+(defun inline-review--overview-source-buffer ()
+  "Return a live `inline-review-mode' buffer that carries this MR's state.
+Prefers `inline-review--overview-origin-buffer' when still alive, otherwise
+falls back to any `inline-review-mode' buffer under
+`inline-review--overview-root'.  Signals a `user-error' when none exists."
+  (let ((origin inline-review--overview-origin-buffer)
+        (root   inline-review--overview-root)
+        (found  nil))
+    (cond
+     ((and origin (buffer-live-p origin)
+           (with-current-buffer origin
+             (bound-and-true-p inline-review-mode)))
+      origin)
+     (root
+      (dolist (buf (buffer-list))
+        (unless found
+          (with-current-buffer buf
+            (when (and (bound-and-true-p inline-review-mode)
+                       buffer-file-name
+                       (string-prefix-p
+                        root (expand-file-name buffer-file-name)))
+              (setq found buf)))))
+      (or found
+          (user-error
+           "inline-review: no active review buffer found for %s" root)))
+     (t
+      (user-error "inline-review: overview has no project root")))))
+
+(defun inline-review-overview-regenerate ()
+  "Regenerate the overview tree from the current diff cache.
+Runs `inline-review-overview' in the originating review buffer so that
+the backend / IID / project-info it needs are in scope."
+  (interactive)
+  (let ((src (inline-review--overview-source-buffer)))
+    (with-current-buffer src
+      (inline-review-overview))))
+
+(defun inline-review-overview-refresh ()
+  "Invalidate the diff cache for this MR and regenerate the overview.
+Runs `inline-review-refresh' in the originating review buffer (which
+clears the cached diff and re-fetches overlays), then re-renders the
+overview tree from the fresh diff."
+  (interactive)
+  (let ((src (inline-review--overview-source-buffer)))
+    (with-current-buffer src
+      (inline-review-refresh)
+      (inline-review-overview))))
+
 ;;;; ─── Mode ──────────────────────────────────────────────────────────────────
 
 (defvar inline-review-overview-mode-map (make-sparse-keymap)
@@ -329,6 +388,8 @@ BINDINGS is an alist of (KEY . COMMAND) where KEY is a `kbd' string."
     ("n"     . inline-review-overview-next-entry)
     ("p"     . inline-review-overview-previous-entry)
     ("o"     . inline-review-overview-open-file-other-window)
+    ("r"     . inline-review-overview-refresh)
+    ("g"     . inline-review-overview-regenerate)
     ("<RET>" . inline-review-overview-open-file-other-window))
   "Key bindings for `inline-review-overview-mode'.
 Each entry is (KEY . COMMAND), where KEY is a string in `kbd' notation
@@ -358,7 +419,10 @@ Displays a folding tree of files changed in the current MR/PR.
 move between entries; RET toggles a directory or opens a file
 (other window by default, current window with a prefix arg); \
 \\[inline-review-overview-open-file-other-window]
-always opens the file on the current line in another window."
+always opens the file on the current line in another window.
+\\[inline-review-overview-refresh] re-fetches the diff and regenerates
+the overview; \\[inline-review-overview-regenerate] regenerates it
+from the already-cached diff."
   :group 'inline-review)
 
 ;; Evil users: force `emacs' state so our local keymap wins over
@@ -387,7 +451,8 @@ backend's `:fetch-diff' once and renders when it returns.  Use
   (let ((backend inline-review--current-backend)
         (iid     inline-review--mr-iid)
         (proj    inline-review--project-info)
-        (root    (inline-review--git-root)))
+        (root    (inline-review--git-root))
+        (origin  (current-buffer)))
     (unless backend
       (user-error "inline-review: no backend set for this buffer"))
     (unless iid
@@ -397,15 +462,19 @@ backend's `:fetch-diff' once and renders when it returns.  Use
     (let* ((key (inline-review--diff-cache-key backend iid proj))
            (cached (gethash key inline-review--diff-cache)))
       (if cached
-          (inline-review--overview-render-changes cached root)
+          (inline-review--overview-render-changes cached root origin)
         (message "inline-review: fetching diff for overview...")
         (funcall (inline-review--backend-prop backend :fetch-diff)
                  (lambda (changes)
                    (puthash key changes inline-review--diff-cache)
-                   (inline-review--overview-render-changes changes root)))))))
+                   (inline-review--overview-render-changes
+                    changes root origin)))))))
 
-(defun inline-review--overview-render-changes (changes root)
-  "Render the overview tree for CHANGES anchored at project ROOT."
+(defun inline-review--overview-render-changes (changes root &optional origin)
+  "Render the overview tree for CHANGES anchored at project ROOT.
+ORIGIN, when non-nil, is the `inline-review-mode' buffer the overview
+was invoked from; it is stored so that `r' / `g' bindings can run
+refresh and regeneration in a buffer that carries the MR state."
   (let* ((entries (delq nil
                         (mapcar #'inline-review--overview-entry-from-change
                                 changes)))
@@ -421,7 +490,9 @@ backend's `:fetch-diff' once and renders when it returns.  Use
         (setq inline-review--overview-tree    tree
               inline-review--overview-folded  (make-hash-table :test 'equal)
               inline-review--overview-summary summary
-              inline-review--overview-root    root)
+              inline-review--overview-root    root
+              inline-review--overview-origin-buffer
+              (and (buffer-live-p origin) origin))
         (if entries
             (inline-review--overview-refresh)
           (insert "inline-review: no files changed in this MR\n")
