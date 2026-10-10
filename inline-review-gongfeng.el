@@ -196,7 +196,8 @@ variables — that is the caller's responsibility."
        (let ((mr-id (and mr (alist-get 'id mr))))
          (when (numberp mr-id)
            (with-current-buffer buf
-             (setq inline-review--mr-id mr-id))))
+             (setq inline-review--mr-id mr-id)
+             (inline-review--save-mr-state))))
        (funcall callback
                 (and mr (alist-get 'source_branch mr))
                 (and mr (alist-get 'target_branch mr)))))))
@@ -216,7 +217,8 @@ variables — that is the caller's responsibility."
         (let ((manual
                (read-string "Project path (e.g. team/project): ")))
           (setq inline-review--project-info
-                `((project-id . ,(url-hexify-string manual))))))))
+                `((project-id . ,(url-hexify-string manual))))))
+      (inline-review--save-mr-state)))
   (alist-get 'project-id inline-review--project-info))
 
 (defun inline-review--gongfeng-resolve-mr-id (callback)
@@ -258,7 +260,8 @@ variables — that is the caller's responsibility."
               "[crm-gongfeng] resolve-mr-id: resolved iid=%d → mr-id=%d"
               iid mr-id)
              (with-current-buffer buf
-               (setq inline-review--mr-id mr-id))
+               (setq inline-review--mr-id mr-id)
+               (inline-review--save-mr-state))
              (funcall callback mr-id))))))))
 
 (defun inline-review--gongfeng-fetch-comments (callback)

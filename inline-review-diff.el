@@ -388,25 +388,25 @@ Returns nil when no diff data is cached yet."
            (inline-review--diff-cache-key
             backend iid proj)
            inline-review--diff-cache)))
-       ;; Fallback: scan every cached entry and pick the first whose files
-       ;; resolve under the current git root.  This handles the case where
-       ;; buffer-local vars are stale or nil (e.g. after navigating to a new
-       ;; file that hasn't fully inherited MR state yet).
+       ;; Fallback: if the primary lookup fails but we have a backend+iid,
+       ;; return any cached entry whose key matches (backend iid *).  This
+       ;; covers project-info drift between the review-url fetch and later
+       ;; lookups while refusing to cross-contaminate with a different MR's
+       ;; cached diff (previously the fallback matched by "first file exists
+       ;; under current root", which could silently return MR A's changes
+       ;; while the current session is reviewing MR B in the same repo —
+       ;; manifesting as hunk navigation visiting files that are not in
+       ;; `inline-review-overview').
        (changes-fallback
         (unless changes
-          (when root
+          (when (and backend iid)
             (let ((found nil))
               (maphash
-               (lambda (_k v)
-                 (unless found
-                   (let* ((first (car v))
-                          (rel
-                           (or (plist-get first :new-path)
-                               (plist-get first :old-path))))
-                     (when (and rel
-                                (file-exists-p
-                                 (expand-file-name rel root)))
-                       (setq found v)))))
+               (lambda (k v)
+                 (when (and (not found)
+                            (equal (nth 0 k) backend)
+                            (equal (nth 1 k) iid))
+                   (setq found v)))
                inline-review--diff-cache)
               found))))
        (changes (or changes changes-fallback))
@@ -556,42 +556,120 @@ Stops at the first hunk with a message rather than wrapping to the last."
   "Return a cache key for the diff of BACKEND IID PROJECT-INFO."
   (list backend iid project-info))
 
+(defun inline-review--parse-git-diff (text)
+  "Parse unified diff TEXT (one or more files) into a list of change plists.
+Each plist has :old-path, :new-path, and :patch, matching the shape
+produced by backend :fetch-diff hooks.  The :patch string starts at the
+first `@@' header of the file so `inline-review--parse-patch' can
+consume it directly.  Deleted files have :new-path = \"/dev/null\",
+newly introduced files have :old-path = \"/dev/null\"."
+  (let ((lines (split-string text "\n"))
+        (result nil)
+        (old-path nil)
+        (new-path nil)
+        (patch-lines nil)
+        (in-patch nil))
+    (cl-labels
+        ((flush ()
+           (when (or old-path new-path)
+             (push (list :old-path (or old-path new-path)
+                         :new-path (or new-path old-path)
+                         :patch (and patch-lines
+                                     (mapconcat #'identity
+                                                (nreverse patch-lines)
+                                                "\n")))
+                   result))
+           (setq old-path nil
+                 new-path nil
+                 patch-lines nil
+                 in-patch nil)))
+      (dolist (line lines)
+        (cond
+         ((string-prefix-p "diff --git " line)
+          (flush))
+         ((and (not in-patch) (string-prefix-p "--- " line))
+          (let ((p (substring line 4)))
+            (setq old-path
+                  (cond ((string= p "/dev/null") "/dev/null")
+                        ((string-prefix-p "a/" p) (substring p 2))
+                        (t p)))))
+         ((and (not in-patch) (string-prefix-p "+++ " line))
+          (let ((p (substring line 4)))
+            (setq new-path
+                  (cond ((string= p "/dev/null") "/dev/null")
+                        ((string-prefix-p "b/" p) (substring p 2))
+                        (t p)))))
+         ((or in-patch (string-prefix-p "@@ " line))
+          (setq in-patch t)
+          (push line patch-lines))))
+      (flush))
+    (nreverse result)))
+
+(defun inline-review--git-fetch-diff ()
+  "Return the current MR's changes list via `git diff', or nil if impossible.
+Runs `git diff origin/target...origin/source' — the same ref range used
+by `inline-review-overview' — so hunk navigation and the overview tree
+always derive from the same underlying diff.  Returns nil (so the caller
+can fall back to the backend's :fetch-diff) when the git root or branch
+names are not yet known, or when the git command fails."
+  (let* ((root   (inline-review--git-root))
+         (source inline-review--mr-source-branch)
+         (target inline-review--mr-target-branch))
+    (when (and root source target)
+      (let* ((default-directory root)
+             (remote-source
+              (if (string-prefix-p "origin/" source)
+                  source
+                (concat "origin/" source)))
+             (remote-target
+              (if (string-prefix-p "origin/" target)
+                  target
+                (concat "origin/" target)))
+             (range (format "%s...%s" remote-target remote-source)))
+        (with-temp-buffer
+          (let ((rc (call-process "git" nil (current-buffer) nil
+                                  "diff" "--no-color" range)))
+            (when (and (integerp rc) (zerop rc))
+              (inline-review--parse-git-diff (buffer-string)))))))))
+
 (defun inline-review--fetch-diff-then
     (backend buf iid project-info rel-path on-done)
   "Fetch or reuse cached diff for BACKEND IID; render hunk overlays in BUF for REL-PATH.
 After hunk overlays are in place, call ON-DONE (a zero-argument function) to
-trigger the next rendering step (typically fetching comment threads)."
+trigger the next rendering step (typically fetching comment threads).
+Prefers a `git diff' invocation matching the overview's ref range so the
+two file lists stay in sync; falls back to the backend's :fetch-diff hook
+only when the git-diff path is unavailable (e.g. source/target branches
+not yet resolved)."
   (let* ((key
           (inline-review--diff-cache-key
            backend iid project-info))
-         (cached (gethash key inline-review--diff-cache)))
-    (if cached
-        (with-current-buffer buf
-          (inline-review--clear-hunk-overlays)
-          (let ((patch
-                 (inline-review--find-patch-for-file
-                  cached rel-path)))
-            (if patch
-                (inline-review--insert-hunk-overlays patch)
-              (message
-               "inline-review: file not changed in this MR — \
+         (cached (gethash key inline-review--diff-cache))
+         (render
+          (lambda (changes)
+            (with-current-buffer buf
+              (inline-review--clear-hunk-overlays)
+              (let ((patch
+                     (inline-review--find-patch-for-file
+                      changes rel-path)))
+                (if patch
+                    (inline-review--insert-hunk-overlays patch)
+                  (message
+                   "inline-review: file not changed in this MR — \
 use `inline-review-next-hunk' to navigate to changed files")))
-          (funcall on-done))
+              (funcall on-done)))))
+    (cond
+     (cached
+      (funcall render cached))
+     ((when-let ((changes (inline-review--git-fetch-diff)))
+        (puthash key changes inline-review--diff-cache)
+        (funcall render changes)
+        t))
+     (t
       (funcall (inline-review--backend-prop backend :fetch-diff)
                (lambda (changes)
                  (puthash key changes inline-review--diff-cache)
-                 (with-current-buffer buf
-                   (inline-review--clear-hunk-overlays)
-                   (let ((patch
-                          (inline-review--find-patch-for-file
-                           changes rel-path)))
-                     (if patch
-                         (inline-review--insert-hunk-overlays
-                          patch)
-                       (message
-                        "inline-review: file not changed in this MR — \
-use `inline-review-next-hunk' to navigate to changed files")))
-                   (funcall on-done)))))))
+                 (funcall render changes)))))))
 
 ;;;; ─── Provide ────────────────────────────────────────────────────────────────
 

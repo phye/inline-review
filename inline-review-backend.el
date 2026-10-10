@@ -451,6 +451,59 @@ Set by `inline-review--render-comment-threads' from the full thread list
 returned by the backend, and propagated across buffer switches so that
 thread/hunk navigation messages report a consistent MR-wide total.")
 
+;;;; ─── Per-repo MR State Cache ────────────────────────────────────────────────
+
+(defun inline-review--save-mr-state ()
+  "Persist the current buffer's MR state plist to `.git/'.
+Writes the subset of state that can be reused when mode is activated in
+a sibling buffer: project-info, source branch, target branch, and the
+backend-global `mr-id'.  IID and backend each have their own cache
+files; thread-count is deliberately omitted because it is a derived
+count that is cheap to recompute from live overlays.  No-op outside a
+git repo, or when the state is wholly empty."
+  (when-let ((file (inline-review--cache-file "inline-review-mr-state")))
+    (let ((state (list :project-info  inline-review--project-info
+                       :source-branch inline-review--mr-source-branch
+                       :target-branch inline-review--mr-target-branch
+                       :mr-id         inline-review--mr-id)))
+      (when (or inline-review--project-info
+                inline-review--mr-source-branch
+                inline-review--mr-target-branch
+                inline-review--mr-id)
+        (write-region (prin1-to-string state) nil file nil 'silent)))))
+
+(defun inline-review--load-cached-mr-state ()
+  "Return the persisted MR state plist for the current repo, or nil.
+The returned plist mirrors the one written by
+`inline-review--save-mr-state' and contains :project-info,
+:source-branch, :target-branch, and :mr-id."
+  (when-let ((file (inline-review--cache-file "inline-review-mr-state")))
+    (when (file-readable-p file)
+      (condition-case nil
+          (with-temp-buffer
+            (insert-file-contents file)
+            (car (read-from-string (buffer-string))))
+        (error nil)))))
+
+(defun inline-review--apply-cached-mr-state ()
+  "Apply persisted MR state to the current buffer's buffer-locals.
+Only sets a slot when its buffer-local counterpart is currently nil, so
+this never clobbers values already supplied by `review-url' or a
+backend operation."
+  (when-let ((state (inline-review--load-cached-mr-state)))
+    (let ((v (plist-get state :project-info)))
+      (when (and v (not inline-review--project-info))
+        (setq inline-review--project-info v)))
+    (let ((v (plist-get state :source-branch)))
+      (when (and v (not inline-review--mr-source-branch))
+        (setq inline-review--mr-source-branch v)))
+    (let ((v (plist-get state :target-branch)))
+      (when (and v (not inline-review--mr-target-branch))
+        (setq inline-review--mr-target-branch v)))
+    (let ((v (plist-get state :mr-id)))
+      (when (and v (not inline-review--mr-id))
+        (setq inline-review--mr-id v)))))
+
 ;;;; ─── Shared Utility Helpers ─────────────────────────────────────────────────
 
 (defun inline-review--relative-file-path ()

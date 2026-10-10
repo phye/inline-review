@@ -175,7 +175,8 @@ The request is aborted after 30 seconds."
         (let ((owner (read-string "Codeberg owner/organization: "))
               (repo (read-string "Codeberg repository name: ")))
           (setq inline-review--project-info
-                `((owner . ,owner) (repo . ,repo))))))))
+                `((owner . ,owner) (repo . ,repo)))))
+      (inline-review--save-mr-state))))
 
 (defun inline-review--codeberg-resolve-branches (callback)
   "Fetch PR source and target branch names, then call CALLBACK with them.

@@ -110,7 +110,8 @@ PAYLOAD is an alist sent as JSON body.  CALLBACK receives parsed JSON."
         (let ((owner (read-string "GitHub owner/organization: "))
               (repo (read-string "GitHub repository name: ")))
           (setq inline-review--project-info
-                `((owner . ,owner) (repo . ,repo))))))))
+                `((owner . ,owner) (repo . ,repo)))))
+      (inline-review--save-mr-state))))
 
 (defun inline-review--github-resolve-branches (callback)
   "Fetch PR source and target branch names, then call CALLBACK with them.

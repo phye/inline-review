@@ -206,7 +206,10 @@ button) so RET-toggle keeps the cursor on the toggled line."
 By default open the file in another window; with a prefix argument
 \\[universal-argument] open it in the current window.  Enables
 `inline-review-mode' in the newly opened buffer so overlays are
-fetched immediately."
+fetched immediately — mode activation picks up MR state (project-info,
+branch names, mr-id) from `.git/inline-review-mr-state', so a fresh
+buffer for a newly-introduced file inherits the same cache key the
+original `review-url' fetch used."
   (let ((file (button-get button 'inline-review-file)))
     (if current-prefix-arg
         (find-file file)

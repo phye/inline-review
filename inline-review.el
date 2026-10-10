@@ -164,6 +164,7 @@ Call `inline-review-finish-review' first"))
         (setq inline-review--current-backend backend)
         (inline-review--save-backend backend))
       (inline-review--save-iid iid)
+      (inline-review--save-mr-state)
       ;; Invalidate diff cache for this MR so we always start fresh
       (remhash
        (inline-review--diff-cache-key
@@ -228,6 +229,7 @@ Call `inline-review-finish-review' first"))
                            (setq inline-review--mr-source-branch source))
                          (when target
                            (setq inline-review--mr-target-branch target))
+                         (inline-review--save-mr-state)
                          (message "[inline-review] source-branch=%s target-branch=%s"
                                   inline-review--mr-source-branch
                                   inline-review--mr-target-branch))
@@ -311,7 +313,8 @@ per-repo cache files under .git/."
                '("inline-review-iid"
                  "inline-review-backend"
                  "inline-review-original-branch"
-                 "inline-review-stash"))
+                 "inline-review-stash"
+                 "inline-review-mr-state"))
         (let ((file
                (expand-file-name fname
                                  (expand-file-name ".git" root))))
@@ -322,9 +325,12 @@ per-repo cache files under .git/."
 
 ;;;###autoload
 (defun inline-review-refresh ()
-  "Re-fetch comments (and diff, if enabled) and refresh overlays.
-Use this to update the display after external changes (e.g. a colleague
-posted a new comment)."
+  "Re-fetch comments and diff from scratch and refresh overlays.
+Invalidates the in-memory diff cache for the current MR so hunk
+navigation and overlays pick up the latest `git diff' output instead
+of serving stale data from an earlier backend-API fetch.  Use this to
+update the display after external changes (e.g. a colleague posted a
+new comment, or the source branch moved)."
   (interactive)
   (unless (bound-and-true-p inline-review-mode)
     (user-error
@@ -333,6 +339,11 @@ posted a new comment)."
     (user-error "inline-review: no MR IID set"))
   (inline-review--assert-token
    inline-review--current-backend)
+  (remhash (inline-review--diff-cache-key
+            inline-review--current-backend
+            inline-review--mr-iid
+            inline-review--project-info)
+           inline-review--diff-cache)
   (message "inline-review: refreshing...")
   (inline-review--refresh-overlays))
 
@@ -415,6 +426,11 @@ Commands:
               ;; review-url already refreshes overlays and handles the rest; bail out
               (setq inline-review-mode nil)
               (cl-return-from nil))))
+        ;; Restore project-info / branch names / mr-id from the per-repo
+        ;; cache so refreshes from a fresh buffer (e.g. one opened via the
+        ;; overview tree) issue their fetches with the same cache key the
+        ;; original `review-url' used.
+        (inline-review--apply-cached-mr-state)
         ;; Set left margin for diff fringe indicators
         (dolist (win (get-buffer-window-list (current-buffer) nil t))
           (let ((margins (window-margins win)))
