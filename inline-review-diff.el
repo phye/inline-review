@@ -15,6 +15,8 @@
 ;;   `inline-review-view-removed-lines'     — popup with full removed block
 ;;   `inline-review-next-hunk'              — go to next diff hunk
 ;;   `inline-review-previous-hunk'          — go to previous diff hunk
+;;   `inline-review-next-file'              — go to next changed file
+;;   `inline-review-previous-file'          — go to previous changed file
 ;;   `inline-review-first-hunk'             — go to first diff hunk in project
 ;;   `inline-review-last-hunk'              — go to last diff hunk in project
 ;;
@@ -523,6 +525,58 @@ Stops at the first hunk with a message rather than wrapping to the last."
     (if prev
         (inline-review--goto-hunk (car prev) (cdr prev))
       (message "inline-review: no more hunks in this project"))))
+
+(defun inline-review--first-hunk-per-file (all)
+  "Return a sorted list of (ABS-PATH . LINE), one entry per file.
+ALL is the sorted hunk list returned by `inline-review--all-hunk-positions';
+only the first hunk of each file is kept, preserving the overview order."
+  (let ((seen (make-hash-table :test 'equal))
+        (result nil))
+    (dolist (entry all)
+      (unless (gethash (car entry) seen)
+        (puthash (car entry) t seen)
+        (push entry result)))
+    (nreverse result)))
+
+;;;###autoload
+(defun inline-review-next-file ()
+  "Jump to the first hunk of the next changed file in the current project.
+Stops at the last file with a message rather than wrapping to the first."
+  (interactive)
+  (unless (inline-review--review-in-progress-p)
+    (user-error
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let* ((files (inline-review--first-hunk-per-file
+                 (inline-review--all-hunk-positions)))
+         (cur-path (car (inline-review--current-hunk-key)))
+         (next (cl-find-if
+                (lambda (entry)
+                  (inline-review--path-overview-less
+                   cur-path (car entry)))
+                files)))
+    (if next
+        (inline-review--goto-hunk (car next) (cdr next))
+      (message "inline-review: no more changed files in this project"))))
+
+;;;###autoload
+(defun inline-review-previous-file ()
+  "Jump to the first hunk of the previous changed file in the current project.
+Stops at the first file with a message rather than wrapping to the last."
+  (interactive)
+  (unless (inline-review--review-in-progress-p)
+    (user-error
+     "inline-review: no active review for this repository — run `inline-review-review-url' first"))
+  (let* ((files (inline-review--first-hunk-per-file
+                 (inline-review--all-hunk-positions)))
+         (cur-path (car (inline-review--current-hunk-key)))
+         (prev (cl-find-if
+                (lambda (entry)
+                  (inline-review--path-overview-less
+                   (car entry) cur-path))
+                (reverse files))))
+    (if prev
+        (inline-review--goto-hunk (car prev) (cdr prev))
+      (message "inline-review: no more changed files in this project"))))
 
 ;;;###autoload
 (defun inline-review-first-hunk ()

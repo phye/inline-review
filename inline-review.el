@@ -394,6 +394,8 @@ Commands:
   `inline-review-last-thread'        - go to last comment thread in project
   `inline-review-next-hunk'          - go to next diff hunk (cross-file)
   `inline-review-previous-hunk'      - go to previous diff hunk (cross-file)
+  `inline-review-next-file'          - go to first hunk of next changed file
+  `inline-review-previous-file'      - go to first hunk of previous changed file
   `inline-review-first-hunk'         - go to first diff hunk in project
   `inline-review-last-hunk'          - go to last diff hunk in project
   `inline-review-view-removed-lines' - view full removed block at point

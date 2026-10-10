@@ -153,6 +153,8 @@ The lookup order for each host is:
 | `inline-review-last-thread` | Jump to the last comment thread in the project |
 | `inline-review-next-hunk` | Jump to the next diff hunk (cross-file) |
 | `inline-review-previous-hunk` | Jump to the previous diff hunk (cross-file) |
+| `inline-review-next-file` | Jump to the first hunk of the next changed file |
+| `inline-review-previous-file` | Jump to the first hunk of the previous changed file |
 | `inline-review-first-hunk` | Jump to the first diff hunk in the project |
 | `inline-review-last-hunk` | Jump to the last diff hunk in the project |
 | `inline-review-view-removed-lines` | Pop up a buffer with the full removed block near point |
@@ -205,6 +207,7 @@ All navigation commands work **cross-file** within the current project:
 - `M-x inline-review-next-thread` / `M-x inline-review-previous-thread` — jump between comment threads
 - `M-x inline-review-first-thread` / `M-x inline-review-last-thread` — jump to the first / last comment thread
 - `M-x inline-review-next-hunk` / `M-x inline-review-previous-hunk` — jump between diff hunks
+- `M-x inline-review-next-file` / `M-x inline-review-previous-file` — jump between changed files
 - `M-x inline-review-first-hunk` / `M-x inline-review-last-hunk` — jump to the first / last hunk
 
 The target file is opened automatically and `inline-review-mode` is activated if needed.
