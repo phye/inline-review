@@ -28,6 +28,7 @@
 (declare-function inline-review--review-in-progress-p    "inline-review"         ())
 (declare-function inline-review-mode                     "inline-review"         (&optional arg))
 (declare-function inline-review-refresh                  "inline-review"         ())
+(declare-function inline-review--all-hunk-positions      "inline-review-diff"    ())
 
 (defvar inline-review--current-backend)
 (defvar inline-review--mr-iid)
@@ -262,6 +263,19 @@ button) so RET-toggle keeps the cursor on the toggled line."
       (puthash path t inline-review--overview-folded))
     (inline-review--overview-refresh)))
 
+(defun inline-review--overview-first-hunk-line (abs-path)
+  "Return the first hunk's new-start line for ABS-PATH in this MR, or nil.
+Reads the MR's cached diff via the overview's source buffer so the
+answer is available immediately — hunk overlays in the opened file
+populate asynchronously and can't be queried right after `find-file'."
+  (let ((src (ignore-errors (inline-review--overview-source-buffer))))
+    (when src
+      (with-current-buffer src
+        (let ((entry
+               (cl-find-if (lambda (e) (equal (car e) abs-path))
+                           (inline-review--all-hunk-positions))))
+          (cdr entry))))))
+
 (defun inline-review--overview-open-file (button)
   "Open the file associated with BUTTON in the overview buffer.
 By default open the file in another window; with a prefix argument
@@ -270,13 +284,18 @@ By default open the file in another window; with a prefix argument
 fetched immediately — mode activation picks up MR state (project-info,
 branch names, mr-id) from `.git/inline-review-mr-state', so a fresh
 buffer for a newly-introduced file inherits the same cache key the
-original `review-url' fetch used."
-  (let ((file (button-get button 'inline-review-file)))
+original `review-url' fetch used.  Point lands on the first hunk of
+the file when its position can be resolved from the cached diff."
+  (let* ((file (button-get button 'inline-review-file))
+         (first-line (inline-review--overview-first-hunk-line file)))
     (if current-prefix-arg
         (find-file file)
       (find-file-other-window file))
     (unless (bound-and-true-p inline-review-mode)
-      (inline-review-mode 1))))
+      (inline-review-mode 1))
+    (when first-line
+      (goto-char (point-min))
+      (forward-line (1- first-line)))))
 
 (defun inline-review--overview-line-button ()
   "Return the button on the current line, or nil."
@@ -372,16 +391,37 @@ overview tree from the fresh diff."
 
 (defvar inline-review-overview-mode-map (make-sparse-keymap)
   "Keymap for `inline-review-overview-mode'.
-Populated from `inline-review-overview-key-bindings'; customize that
-variable via \\[customize-option] rather than editing this map directly
-so that changes made through Customize are honoured.")
+
+The built-in bindings come from `inline-review-overview-key-bindings'
+and can be edited with \\[customize-option].  To add your own
+bindings, use `define-key' directly:
+
+  (with-eval-after-load \\='inline-review-overview
+    (define-key inline-review-overview-mode-map (kbd \"x\") #\\='my-cmd))
+
+User-added bindings survive subsequent Customize saves of
+`inline-review-overview-key-bindings' — only keys previously installed
+by that defcustom are removed on reapplication.")
+
+(defvar inline-review--overview-managed-keys nil
+  "Internal list of keys currently owned by `inline-review-overview-key-bindings'.
+Used by `inline-review--overview-apply-key-bindings' to remove only
+Customize-managed bindings on reapplication, leaving user-added
+`define-key' entries on `inline-review-overview-mode-map' intact.")
 
 (defun inline-review--overview-apply-key-bindings (map bindings)
-  "Reset MAP and (re)install BINDINGS on it.
-BINDINGS is an alist of (KEY . COMMAND) where KEY is a `kbd' string."
-  (setcdr map nil)
+  "Install BINDINGS on MAP, replacing any previously-managed Customize keys.
+BINDINGS is an alist of (KEY . COMMAND) where KEY is a `kbd' string.
+Keys that were installed by a prior call are first unbound (`define-key'
+with nil); keys added by the user via direct `define-key' calls are not
+touched."
+  (dolist (key inline-review--overview-managed-keys)
+    (define-key map key nil))
+  (setq inline-review--overview-managed-keys nil)
   (dolist (b bindings)
-    (define-key map (kbd (car b)) (cdr b))))
+    (let ((key (kbd (car b))))
+      (define-key map key (cdr b))
+      (push key inline-review--overview-managed-keys))))
 
 (defcustom inline-review-overview-key-bindings
   '(("q"     . quit-window)
@@ -396,7 +436,9 @@ Each entry is (KEY . COMMAND), where KEY is a string in `kbd' notation
 and COMMAND is the command symbol to invoke.  Setting this via
 \\[customize-option] rebuilds `inline-review-overview-mode-map' so
 existing overview buffers pick up the new bindings on their next
-command lookup."
+command lookup.  Only keys previously installed by this option are
+removed on reapplication; user bindings added with `define-key' on
+`inline-review-overview-mode-map' are preserved."
   :type '(alist :key-type (string :tag "Key (kbd notation)")
                 :value-type (function :tag "Command"))
   :group 'inline-review
