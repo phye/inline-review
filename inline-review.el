@@ -104,6 +104,12 @@ state is populated, mode is enabled, and the review has been recorded
 in `inline-review--review-active-cache'.  Suitable for triggering
 follow-up actions such as popping up `inline-review-overview'.")
 
+(defvar inline-review-review-finished-hook nil
+  "Hook run at the end of `inline-review-finish-review'.
+Runs after mode is disabled in all project buffers, the original branch
+is restored, and per-project caches/state files are cleared.  Suitable
+for restoring window configuration saved by a start-hook.")
+
 ;;
 ;; These functions are the only orchestrators that trigger rendering
 ;; and re-fetch logic.  Backend functions receive callbacks / on-success
@@ -330,7 +336,8 @@ per-repo cache files under .git/."
           (when (file-exists-p file)
             (delete-file file)))))
     (message
-     "inline-review: review session finished and all state cleared.")))
+     "inline-review: review session finished and all state cleared.")
+    (run-hooks 'inline-review-review-finished-hook)))
 
 ;;;###autoload
 (defun inline-review-refresh ()
