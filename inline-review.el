@@ -96,6 +96,14 @@
 (declare-function inline-review--fetch-diff-then
                   "inline-review-diff")
 
+(defvar inline-review-review-started-hook nil
+  "Hook run after `inline-review-review-url' finishes setting up a review.
+Runs in the review buffer (the buffer whose `inline-review-mode' was
+just activated) once the branch has been checked out, buffer-local MR
+state is populated, mode is enabled, and the review has been recorded
+in `inline-review--review-active-cache'.  Suitable for triggering
+follow-up actions such as popping up `inline-review-overview'.")
+
 ;;
 ;; These functions are the only orchestrators that trigger rendering
 ;; and re-fetch logic.  Backend functions receive callbacks / on-success
@@ -213,7 +221,8 @@ Call `inline-review-finish-review' first"))
                     ;; know a live review exists here.  Other projects are unaffected.
                     (when-let ((root (inline-review--git-root)))
                       (puthash root iid
-                               inline-review--review-active-cache))))))
+                               inline-review--review-active-cache))
+                    (run-hooks 'inline-review-review-started-hook)))))
              (resolve-branches-fn
               (inline-review--backend-prop
                inline-review--current-backend :resolve-branches)))
