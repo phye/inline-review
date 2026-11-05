@@ -96,19 +96,45 @@
 (declare-function inline-review--fetch-diff-then
                   "inline-review-diff")
 
-(defvar inline-review-review-started-hook nil
-  "Hook run after `inline-review-review-url' finishes setting up a review.
-Runs in the review buffer (the buffer whose `inline-review-mode' was
-just activated) once the branch has been checked out, buffer-local MR
-state is populated, mode is enabled, and the review has been recorded
-in `inline-review--review-active-cache'.  Suitable for triggering
-follow-up actions such as popping up `inline-review-overview'.")
+(defvar inline-review--hooks (make-hash-table :test 'equal)
+  "Project-scoped review hooks keyed by (EVENT . NORMALIZED-ROOT).
+EVENT is a symbol like `start' or `finish'; NORMALIZED-ROOT is the
+project's git root as returned by `inline-review--normalize-root'.
+Each value is a list of nullary functions.  Managed via
+`inline-review-add-hook' and `inline-review-remove-hook'; dispatched
+by `inline-review--run-hook'.")
 
-(defvar inline-review-review-finished-hook nil
-  "Hook run at the end of `inline-review-finish-review'.
-Runs after mode is disabled in all project buffers, the original branch
-is restored, and per-project caches/state files are cleared.  Suitable
-for restoring window configuration saved by a start-hook.")
+(defun inline-review--normalize-root (root)
+  "Return ROOT as a canonical directory string (absolute, trailing slash)."
+  (file-name-as-directory (expand-file-name root)))
+
+(defun inline-review-add-hook (root event function)
+  "Register FUNCTION to run on EVENT for the review in project ROOT.
+EVENT is a symbol such as `start' (fired by `inline-review-review-url'
+once a review becomes active) or `finish' (fired at the end of
+`inline-review-finish-review').  ROOT is normalized before storage.
+Hooks are not auto-removed; call `inline-review-remove-hook' when done
+(typically from inside FUNCTION for one-shot semantics)."
+  (let* ((key (cons event (inline-review--normalize-root root)))
+         (hooks (gethash key inline-review--hooks)))
+    (unless (memq function hooks)
+      (puthash key (cons function hooks) inline-review--hooks))))
+
+(defun inline-review-remove-hook (root event function)
+  "Remove FUNCTION from EVENT hooks for project ROOT."
+  (let* ((key (cons event (inline-review--normalize-root root)))
+         (hooks (gethash key inline-review--hooks)))
+    (when hooks
+      (let ((filtered (delq function hooks)))
+        (if filtered
+            (puthash key filtered inline-review--hooks)
+          (remhash key inline-review--hooks))))))
+
+(defun inline-review--run-hook (root event)
+  "Call all handlers registered for EVENT in project ROOT."
+  (dolist (fn (gethash (cons event (inline-review--normalize-root root))
+                       inline-review--hooks))
+    (funcall fn)))
 
 ;;
 ;; These functions are the only orchestrators that trigger rendering
@@ -227,8 +253,8 @@ Call `inline-review-finish-review' first"))
                     ;; know a live review exists here.  Other projects are unaffected.
                     (when-let ((root (inline-review--git-root)))
                       (puthash root iid
-                               inline-review--review-active-cache))
-                    (run-hooks 'inline-review-review-started-hook)))))
+                               inline-review--review-active-cache)
+                      (inline-review--run-hook root 'start))))))
              (resolve-branches-fn
               (inline-review--backend-prop
                inline-review--current-backend :resolve-branches)))
@@ -337,7 +363,8 @@ per-repo cache files under .git/."
             (delete-file file)))))
     (message
      "inline-review: review session finished and all state cleared.")
-    (run-hooks 'inline-review-review-finished-hook)))
+    (when root
+      (inline-review--run-hook root 'finish))))
 
 ;;;###autoload
 (defun inline-review-refresh ()
