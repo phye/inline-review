@@ -193,6 +193,30 @@ changes (%s)" stash-ref))
 
 ;;;; ─── Remote Sync ────────────────────────────────────────────────────────────
 
+(defun inline-review--fetch-origin ()
+  "Fetch all refs from `origin' so remote-tracking branches are current.
+Silently skips failures (e.g. network issues) so the caller can still
+operate on whatever refs are already present locally.
+Returns t on success, nil on failure."
+  (let* ((default-directory
+          (or (inline-review--git-root) default-directory))
+         (errbuf (get-buffer-create " *crm-fetch-err*")))
+    (with-current-buffer errbuf (erase-buffer))
+    (let ((rc (call-process "git" nil (list errbuf t) nil
+                            "fetch" "origin")))
+      (if (and (integerp rc) (zerop rc))
+          (progn
+            (message "inline-review: fetched latest refs from origin")
+            t)
+        (let ((err (with-current-buffer errbuf (buffer-string))))
+          (message
+           "inline-review: git fetch origin failed%s \
+(proceeding with local refs)"
+           (if (string-empty-p err)
+               ""
+             (format " — %s" (string-trim err))))
+          nil)))))
+
 (defun inline-review--pull-current-branch ()
   "Pull the current branch from its upstream if one is configured.
 Runs `git pull --ff-only'; silently skips when no upstream is set.

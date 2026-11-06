@@ -79,6 +79,8 @@
                   "inline-review-branch")
 (declare-function inline-review--checkout-branch-for-review
                   "inline-review-branch")
+(declare-function inline-review--fetch-origin
+                  "inline-review-branch")
 (declare-function inline-review--load-original-branch
                   "inline-review-branch")
 (declare-function inline-review--pop-stash
@@ -190,6 +192,7 @@ Call `inline-review-finish-review' first"))
       (user-error
        "inline-review: expected a full MR/PR URL, got: %S"
        url))
+    (inline-review--fetch-origin)
     (let ((iid (plist-get parsed :iid))
           (backend (plist-get parsed :backend))
           (projinfo (plist-get parsed :project-info)))
