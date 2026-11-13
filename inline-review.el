@@ -97,6 +97,8 @@
                   "inline-review-diff")
 (declare-function inline-review--fetch-diff-then
                   "inline-review-diff")
+(declare-function inline-review--overview-render-changes
+                  "inline-review-overview")
 
 (defvar inline-review--hooks (make-hash-table :test 'equal)
   "Project-scoped review hooks keyed by (EVENT . NORMALIZED-ROOT).
@@ -105,6 +107,13 @@ project's git root as returned by `inline-review--normalize-root'.
 Each value is a list of nullary functions.  Managed via
 `inline-review-add-hook' and `inline-review-remove-hook'; dispatched
 by `inline-review--run-hook'.")
+
+(defvar inline-review--pre-review-window-configs
+  (make-hash-table :test 'equal)
+  "Window configurations saved by `inline-review-review-url'.
+Keyed by normalized project root (see `inline-review--normalize-root').
+`inline-review-finish-review' restores the matching entry so the user
+returns to the layout they had before the review started.")
 
 (defun inline-review--normalize-root (root)
   "Return ROOT as a canonical directory string (absolute, trailing slash)."
@@ -192,6 +201,10 @@ Call `inline-review-finish-review' first"))
       (user-error
        "inline-review: expected a full MR/PR URL, got: %S"
        url))
+    (when-let ((root (inline-review--git-root)))
+      (puthash (inline-review--normalize-root root)
+               (current-window-configuration)
+               inline-review--pre-review-window-configs))
     (inline-review--fetch-origin)
     (let ((iid (plist-get parsed :iid))
           (backend (plist-get parsed :backend))
@@ -257,7 +270,9 @@ Call `inline-review-finish-review' first"))
                     (when-let ((root (inline-review--git-root)))
                       (puthash root iid
                                inline-review--review-active-cache)
-                      (inline-review--run-hook root 'start))))))
+                      (inline-review--run-hook root 'start)
+                      (inline-review--setup-review-windows
+                       initial-buf))))))
              (resolve-branches-fn
               (inline-review--backend-prop
                inline-review--current-backend :resolve-branches)))
@@ -279,6 +294,54 @@ Call `inline-review-finish-review' first"))
                                   inline-review--mr-target-branch))
                        (funcall proceed)))
           (funcall proceed))))))
+
+(defun inline-review--setup-review-windows (initial-buf)
+  "Arrange the review layout: overview on the left, first file on the right.
+INITIAL-BUF is the `inline-review-mode' buffer that carries MR state —
+the diff cache key is read from its buffer-local variables.  If the
+diff for this MR is not yet cached the backend's `:fetch-diff' is
+invoked once and the layout is applied when it returns."
+  (when (buffer-live-p initial-buf)
+    (with-current-buffer initial-buf
+      (let ((backend inline-review--current-backend)
+            (iid     inline-review--mr-iid)
+            (proj    inline-review--project-info)
+            (root    (inline-review--git-root)))
+        (when (and backend iid root)
+          (let* ((key    (inline-review--diff-cache-key backend iid proj))
+                 (cached (gethash key inline-review--diff-cache))
+                 (apply-layout
+                  (lambda (changes)
+                    (inline-review--apply-review-layout
+                     changes root initial-buf))))
+            (if cached
+                (funcall apply-layout cached)
+              (funcall (inline-review--backend-prop backend :fetch-diff)
+                       (lambda (changes)
+                         (puthash key changes inline-review--diff-cache)
+                         (funcall apply-layout changes))))))))))
+
+(defun inline-review--apply-review-layout (changes root origin)
+  "Show overview on the left and the first changed file on the right.
+CHANGES is the cached MR diff; ROOT is the project root; ORIGIN is the
+`inline-review-mode' buffer that carries the MR state (used by the
+overview for its `r' / `g' refresh commands).
+
+Opens the first file by simulating RET on its overview entry, which is
+exactly the user-facing action that opens a file in another window at
+its first hunk."
+  (delete-other-windows)
+  (inline-review--overview-render-changes changes root origin)
+  (let ((btn (next-button (point-min))))
+    (while (and btn (not (button-get btn 'inline-review-file)))
+      (setq btn (next-button (button-end btn))))
+    (when btn
+      (goto-char (button-start btn))
+      ;; Force a horizontal split so the file always lands on the right,
+      ;; regardless of frame size or `split-window-preferred-function'.
+      (split-window-right)
+      (let ((current-prefix-arg nil))
+        (button-activate btn)))))
 
 ;;;###autoload
 (defun inline-review-finish-review ()
@@ -366,6 +429,16 @@ per-repo cache files under .git/."
             (delete-file file)))))
     (message
      "inline-review: review session finished and all state cleared.")
+    ;; 5. Restore the window configuration saved by
+    ;; `inline-review-review-url' so the user returns to their original
+    ;; layout.  Run this after state cleanup so any error above still
+    ;; leaves the review properly torn down.
+    (when root
+      (let ((key (inline-review--normalize-root root)))
+        (when-let ((config (gethash key
+                                    inline-review--pre-review-window-configs)))
+          (remhash key inline-review--pre-review-window-configs)
+          (set-window-configuration config))))
     (when root
       (inline-review--run-hook root 'finish))))
 
