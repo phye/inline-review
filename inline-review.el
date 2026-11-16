@@ -99,6 +99,8 @@
                   "inline-review-diff")
 (declare-function inline-review--overview-render-changes
                   "inline-review-overview")
+(declare-function inline-review--overview-first-hunk-line
+                  "inline-review-overview")
 
 (defvar inline-review--hooks (make-hash-table :test 'equal)
   "Project-scoped review hooks keyed by (EVENT . NORMALIZED-ROOT).
@@ -322,14 +324,18 @@ invoked once and the layout is applied when it returns."
                          (funcall apply-layout changes))))))))))
 
 (defun inline-review--apply-review-layout (changes root origin)
-  "Show overview on the left and the first changed file on the right.
-CHANGES is the cached MR diff; ROOT is the project root; ORIGIN is the
-`inline-review-mode' buffer that carries the MR state (used by the
-overview for its `r' / `g' refresh commands).
+  "Lay out the frame as three equal columns for the review session.
+Columns, left to right: `*inline-review-overview*', the first changed
+file at its first hunk, and the same file again.  CHANGES is the cached
+MR diff; ROOT is the project root; ORIGIN is the `inline-review-mode'
+buffer that carries the MR state (used by the overview for its
+`r' / `g' refresh commands).
 
-Opens the first file by simulating RET on its overview entry, which is
-exactly the user-facing action that opens a file in another window at
-its first hunk."
+Buffers are installed directly with `set-window-buffer' rather than via
+the overview's RET action, because that path routes through
+`find-file-other-window' and lets `display-buffer' decide where the
+file lands — which can produce an extra split depending on
+`display-buffer-alist'."
   (delete-other-windows)
   (inline-review--overview-render-changes changes root origin)
   (let ((btn (next-button (point-min))))
@@ -337,11 +343,25 @@ its first hunk."
       (setq btn (next-button (button-end btn))))
     (when btn
       (goto-char (button-start btn))
-      ;; Force a horizontal split so the file always lands on the right,
-      ;; regardless of frame size or `split-window-preferred-function'.
-      (split-window-right)
-      (let ((current-prefix-arg nil))
-        (button-activate btn)))))
+      (let* ((file       (button-get btn 'inline-review-file))
+             (first-line (inline-review--overview-first-hunk-line file))
+             (file-buf   (find-file-noselect file))
+             (third      (max 1 (/ (window-total-width) 3)))
+             (middle     (split-window-right third)))
+        (split-window middle nil t)
+        (with-current-buffer file-buf
+          (unless (bound-and-true-p inline-review-mode)
+            (inline-review-mode 1))
+          (when first-line
+            (goto-char (point-min))
+            (forward-line (1- first-line))))
+        (dolist (w (cdr (window-list nil nil (frame-first-window))))
+          (set-window-buffer w file-buf)
+          (when first-line
+            (set-window-point
+             w (with-current-buffer file-buf (point)))))
+        (select-window
+         (nth 1 (window-list nil nil (frame-first-window))))))))
 
 ;;;###autoload
 (defun inline-review-finish-review ()
