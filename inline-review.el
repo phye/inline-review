@@ -99,6 +99,8 @@
                   "inline-review-diff")
 (declare-function inline-review--overview-render-changes
                   "inline-review-overview")
+(declare-function inline-review--overview-populate
+                  "inline-review-overview")
 (declare-function inline-review--overview-first-hunk-line
                   "inline-review-overview")
 
@@ -331,37 +333,42 @@ MR diff; ROOT is the project root; ORIGIN is the `inline-review-mode'
 buffer that carries the MR state (used by the overview for its
 `r' / `g' refresh commands).
 
-Buffers are installed directly with `set-window-buffer' rather than via
-the overview's RET action, because that path routes through
-`find-file-other-window' and lets `display-buffer' decide where the
-file lands — which can produce an extra split depending on
-`display-buffer-alist'."
+The three windows are created first — while there is exactly one known
+window — and every buffer (overview and file) is installed with
+`set-window-buffer' rather than via `display-buffer'.  This keeps the
+layout immune to `display-buffer-alist', `display-buffer-overriding-action',
+and window dedication, any of which can otherwise route
+`*inline-review-overview*' into a side/pop-up window and leave the
+three-column layout stranded with duplicated overview windows."
   (delete-other-windows)
-  (inline-review--overview-render-changes changes root origin)
-  (let ((btn (next-button (point-min))))
-    (while (and btn (not (button-get btn 'inline-review-file)))
-      (setq btn (next-button (button-end btn))))
-    (when btn
-      (goto-char (button-start btn))
-      (let* ((file       (button-get btn 'inline-review-file))
-             (first-line (inline-review--overview-first-hunk-line file))
-             (file-buf   (find-file-noselect file))
-             (third      (max 1 (/ (window-total-width) 3)))
-             (middle     (split-window-right third)))
-        (split-window middle nil t)
-        (with-current-buffer file-buf
-          (unless (bound-and-true-p inline-review-mode)
-            (inline-review-mode 1))
-          (when first-line
-            (goto-char (point-min))
-            (forward-line (1- first-line))))
-        (dolist (w (cdr (window-list nil nil (frame-first-window))))
-          (set-window-buffer w file-buf)
-          (when first-line
-            (set-window-point
-             w (with-current-buffer file-buf (point)))))
-        (select-window
-         (nth 1 (window-list nil nil (frame-first-window))))))))
+  (let* ((left   (selected-window))
+         (third  (max 1 (/ (window-total-width left) 3)))
+         (middle (split-window-right third left))
+         (right  (split-window middle nil t))
+         (overview-buf (inline-review--overview-populate
+                        changes root origin)))
+    (set-window-buffer left overview-buf)
+    (with-current-buffer overview-buf
+      (let ((btn (next-button (point-min))))
+        (while (and btn (not (button-get btn 'inline-review-file)))
+          (setq btn (next-button (button-end btn))))
+        (when btn
+          (set-window-point left (button-start btn))
+          (let* ((file       (button-get btn 'inline-review-file))
+                 (first-line (inline-review--overview-first-hunk-line file))
+                 (file-buf   (find-file-noselect file)))
+            (with-current-buffer file-buf
+              (unless (bound-and-true-p inline-review-mode)
+                (inline-review-mode 1))
+              (when first-line
+                (goto-char (point-min))
+                (forward-line (1- first-line))))
+            (dolist (w (list middle right))
+              (set-window-buffer w file-buf)
+              (when first-line
+                (set-window-point
+                 w (with-current-buffer file-buf (point)))))
+            (select-window middle)))))))
 
 ;;;###autoload
 (defun inline-review-finish-review ()

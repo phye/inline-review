@@ -512,11 +512,15 @@ backend's `:fetch-diff' once and renders when it returns.  Use
                    (inline-review--overview-render-changes
                     changes root origin)))))))
 
-(defun inline-review--overview-render-changes (changes root &optional origin)
-  "Render the overview tree for CHANGES anchored at project ROOT.
+(defun inline-review--overview-populate (changes root &optional origin)
+  "Populate `*inline-review-overview*' with CHANGES anchored at ROOT.
 ORIGIN, when non-nil, is the `inline-review-mode' buffer the overview
 was invoked from; it is stored so that `r' / `g' bindings can run
-refresh and regeneration in a buffer that carries the MR state."
+refresh and regeneration in a buffer that carries the MR state.
+
+Returns the overview buffer.  Does not touch the window layout — the
+caller decides whether to pop to it or install it directly with
+`set-window-buffer'."
   (let* ((entries (delq nil
                         (mapcar #'inline-review--overview-entry-from-change
                                 changes)))
@@ -539,6 +543,16 @@ refresh and regeneration in a buffer that carries the MR state."
             (inline-review--overview-refresh)
           (insert "inline-review: no files changed in this MR\n")
           (goto-char (point-min)))))
+    outbuf))
+
+(defun inline-review--overview-render-changes (changes root &optional origin)
+  "Render the overview tree for CHANGES and pop to its buffer.
+Thin wrapper over `inline-review--overview-populate' used by standalone
+`M-x inline-review-overview' invocations where `display-buffer' routing
+is desirable.  The review-session layout (`inline-review-review-url')
+bypasses this and installs the buffer with `set-window-buffer' to keep
+`display-buffer-alist' from disturbing the three-column layout."
+  (let ((outbuf (inline-review--overview-populate changes root origin)))
     (pop-to-buffer-same-window outbuf)))
 
 (provide 'inline-review-overview)
